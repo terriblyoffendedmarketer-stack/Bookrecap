@@ -114,7 +114,7 @@ $('btn-setup-save').addEventListener('click', async () => {
 let searchTimer;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(doSearch, 350);
+  searchTimer = setTimeout(doSearch, 200);
 });
 
 searchInput.addEventListener('focus', () => {
@@ -225,6 +225,7 @@ async function loadSettingsPanel() {
   $('cfg-gcsecret').value = cfg.google_client_secret || '';
   $('cfg-redirect').value = cfg.google_redirect_uri || '';
   $('cfg-anthropic').value = cfg.anthropic_api_key || '';
+  $('cfg-folder').value = cfg.drive_folder_id || '';
 }
 
 $('btn-cfg-save').addEventListener('click', async () => {
@@ -239,6 +240,7 @@ $('btn-cfg-save').addEventListener('click', async () => {
     google_client_id:     $('cfg-gcid').value.trim(),
     google_client_secret: $('cfg-gcsecret').value.trim(),
     google_redirect_uri:  $('cfg-redirect').value.trim(),
+    drive_folder_id:      $('cfg-folder').value.trim(),
   };
 
   await fetch('/api/config', {

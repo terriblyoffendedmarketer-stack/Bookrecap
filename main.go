@@ -359,6 +359,7 @@ func handleConfigGet(w http.ResponseWriter, r *http.Request) {
 		"google_client_secret":  mask(cfg.GoogleClientSecret),
 		"google_redirect_uri":   cfg.GoogleRedirectURI,
 		"anthropic_api_key":     mask(cfg.AnthropicAPIKey),
+		"drive_folder_id":       cfg.DriveFolderID,
 		"ready":                 configReady(),
 	})
 }
@@ -369,6 +370,7 @@ func handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		GoogleClientSecret string `json:"google_client_secret"`
 		GoogleRedirectURI  string `json:"google_redirect_uri"`
 		AnthropicAPIKey    string `json:"anthropic_api_key"`
+		DriveFolderID      string `json:"drive_folder_id"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -387,6 +389,7 @@ func handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	if body.AnthropicAPIKey != "" && !strings.HasPrefix(body.AnthropicAPIKey, "••") {
 		setConfigVal("anthropic_api_key", body.AnthropicAPIKey)
 	}
+	setConfigVal("drive_folder_id", extractFolderID(body.DriveFolderID))
 	writeJSON(w, map[string]interface{}{"ok": true, "ready": configReady()})
 }
 
@@ -450,3 +453,4 @@ func main() {
 	log.Printf("BookRecap running on http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
+

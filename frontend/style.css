@@ -152,10 +152,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: hidden;
 }
 .dropdown-item:last-child { border-bottom: none; }
 .dropdown-item:hover, .dropdown-item.active { background: var(--accent-dim); }
-.dropdown-item .name { font-size: 14px; font-weight: 500; }
+.dropdown-item .name {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .dropdown-item .meta { font-size: 11px; color: var(--text-muted); }
 
 /* --- Selected book card --- */
