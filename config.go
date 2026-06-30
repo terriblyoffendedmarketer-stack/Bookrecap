@@ -12,6 +12,7 @@ type AppConfig struct {
 	GoogleClientSecret string `json:"google_client_secret"`
 	GoogleRedirectURI  string `json:"google_redirect_uri"`
 	AnthropicAPIKey    string `json:"anthropic_api_key"`
+	DriveFolderID      string `json:"drive_folder_id"`
 	SecretKey          string `json:"-"`
 	SecretBlockKey     string `json:"-"`
 }
@@ -22,6 +23,7 @@ func loadConfig() AppConfig {
 		GoogleClientSecret: configVal("google_client_secret"),
 		GoogleRedirectURI:  configVal("google_redirect_uri"),
 		AnthropicAPIKey:    configVal("anthropic_api_key"),
+		DriveFolderID:      configVal("drive_folder_id"),
 		SecretKey:          getOrCreateSecret("secret_key"),
 		SecretBlockKey:     getOrCreateSecret("secret_block_key"),
 	}

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#7c6af7"/>
+  <g fill="#fff">
+    <rect x="136" y="112" width="168" height="224" rx="12"/>
+    <rect x="152" y="128" width="136" height="192" rx="8" fill="#3d3468"/>
+    <rect x="168" y="160" width="104" height="10" rx="5" fill="#fff"/>
+    <rect x="168" y="184" width="86" height="10" rx="5" fill="#fff"/>
+    <rect x="168" y="208" width="96" height="10" rx="5" fill="#fff"/>
+    <rect x="168" y="232" width="78" height="10" rx="5" fill="#fff"/>
+    <rect x="168" y="256" width="90" height="10" rx="5" fill="#fff"/>
+    <rect x="208" y="112" width="168" height="224" rx="12" fill="#9d94f8"/>
+    <rect x="224" y="128" width="136" height="192" rx="8" fill="#2a2060"/>
+    <rect x="240" y="160" width="104" height="10" rx="5" fill="#fff" opacity=".9"/>
+    <rect x="240" y="184" width="86" height="10" rx="5" fill="#fff" opacity=".9"/>
+    <rect x="240" y="208" width="96" height="10" rx="5" fill="#fff" opacity=".9"/>
+    <rect x="240" y="232" width="78" height="10" rx="5" fill="#fff" opacity=".9"/>
+    <rect x="240" y="256" width="90" height="10" rx="5" fill="#fff" opacity=".9"/>
+  </g>
+  <text x="256" y="390" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="52" font-weight="700" fill="#fff" opacity=".95">recap</text>
+</svg>

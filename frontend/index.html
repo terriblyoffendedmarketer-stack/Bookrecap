@@ -7,6 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>BookRecap</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -182,6 +184,10 @@
           <div class="label">Redirect URI</div>
           <input id="cfg-redirect" class="search-input" type="text" placeholder="http://localhost:8080/auth/callback" autocomplete="off">
         </div>
+        <div>
+          <div class="label">Library Folder (optional)</div>
+          <input id="cfg-folder" class="search-input" type="text" placeholder="Drive folder URL or ID — leave blank to search all Drive" autocomplete="off">
+        </div>
         <button id="btn-cfg-save" class="btn-primary" style="margin-top:4px;">Save</button>
         <div id="cfg-status" style="font-size:13px;text-align:center;display:none;"></div>
       </div>
@@ -212,5 +218,10 @@
 </div><!-- /app -->
 
 <script src="/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
 </body>
 </html>

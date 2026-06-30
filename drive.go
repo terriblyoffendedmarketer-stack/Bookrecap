@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,6 +14,17 @@ import (
 	"google.golang.org/api/option"
 	googleoauth2 "google.golang.org/api/oauth2/v2"
 )
+
+var folderURLRe = regexp.MustCompile(`/folders/([a-zA-Z0-9_-]+)`)
+
+// extractFolderID returns the folder ID from a Drive URL or the raw string if it's already an ID.
+func extractFolderID(s string) string {
+	s = strings.TrimSpace(s)
+	if m := folderURLRe.FindStringSubmatch(s); len(m) > 1 {
+		return m[1]
+	}
+	return s
+}
 
 var driveScopes = []string{
 	drive.DriveReadonlyScope,
@@ -68,8 +80,13 @@ func searchBooks(token *oauth2.Token, query string) ([]DriveFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg := loadConfig()
+	driveQ := `(mimeType='application/epub+zip' or mimeType='application/pdf' or name contains '.epub' or name contains '.pdf') and trashed=false`
+	if cfg.DriveFolderID != "" {
+		driveQ += ` and '` + cfg.DriveFolderID + `' in parents`
+	}
 	result, err := svc.Files.List().
-		Q(`(mimeType='application/epub+zip' or mimeType='application/pdf' or name contains '.epub' or name contains '.pdf') and trashed=false`).
+		Q(driveQ).
 		Fields("files(id,name,mimeType)").
 		PageSize(200).
 		OrderBy("viewedByMeTime desc").
@@ -119,19 +136,42 @@ func searchBooks(token *oauth2.Token, query string) ([]DriveFile, error) {
 }
 
 // fuzzyScore returns how well candidate matches query (higher = better).
-// Uses bigram overlap + prefix bonus.
 func fuzzyScore(candidate, query string) int {
+	if query == "" {
+		return 1
+	}
 	if candidate == query {
 		return 1000
+	}
+	if strings.HasPrefix(candidate, query) {
+		return 900
 	}
 	if strings.Contains(candidate, query) {
 		return 500 + len(query)
 	}
-	queryBigrams := bigrams(query)
-	candidateBigrams := bigrams(candidate)
+	// Word-level prefix matching
+	score := 0
+	for _, qw := range strings.Fields(query) {
+		if len(qw) < 2 {
+			continue
+		}
+		for _, cw := range strings.Fields(candidate) {
+			if strings.HasPrefix(cw, qw) {
+				score += 100 + len(qw)*5
+			} else if strings.Contains(cw, qw) {
+				score += 40 + len(qw)*2
+			}
+		}
+	}
+	if score > 0 {
+		return score
+	}
+	// Bigram fallback
+	qBigrams := bigrams(query)
+	cBigrams := bigrams(candidate)
 	shared := 0
-	for bg := range queryBigrams {
-		if candidateBigrams[bg] {
+	for bg := range qBigrams {
+		if cBigrams[bg] {
 			shared++
 		}
 	}
