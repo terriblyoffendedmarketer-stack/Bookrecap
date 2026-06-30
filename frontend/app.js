@@ -4,10 +4,12 @@
 const state = {
   authed: false,
   email: '',
-  book: null,        // { id, name, mime_type }
-  chapterCount: 0,   // total chapters in the book
-  upTo: 1,           // user-selected "read up to chapter N"
-  chatHistory: [],   // [{role, content}]
+  book: null,          // { id, name, mime_type }
+  chapterCount: 0,
+  upTo: 1,
+  chatHistory: [],     // main Ask tab
+  recapHistory: [],    // seeded after recap completes
+  photoHistory: [],    // seeded after photo explain/recap completes
   photoB64: null,
   photoMediaType: 'image/jpeg',
   streaming: false,
@@ -35,7 +37,6 @@ const tabs         = document.querySelectorAll('.tab');
 
 // --- Init ---
 async function init() {
-  // Check if server is configured first
   const cfgRes = await fetch('/api/config');
   const cfg = await cfgRes.json();
   if (!cfg.ready) {
@@ -58,7 +59,6 @@ function showSetup(cfg) {
   setupScreen.classList.remove('hidden');
   loginScreen.classList.add('hidden');
   appScreen.classList.add('hidden');
-  // Pre-fill any existing values
   if (cfg.google_client_id) $('setup-gcid').value = cfg.google_client_id;
   if (cfg.google_redirect_uri) $('setup-redirect').value = cfg.google_redirect_uri;
   else $('setup-redirect').value = window.location.origin + '/auth/callback';
@@ -175,7 +175,7 @@ async function selectBook(file) {
   }
   const data = await res.json();
   state.chapterCount = data.chapter_count;
-  state.upTo = data.chapter_count; // default: all chapters read
+  state.upTo = data.chapter_count;
   bookChapters.textContent = `${data.chapter_count} chapters`;
   chapterInput.max = data.chapter_count;
   chapterInput.value = data.chapter_count;
@@ -199,6 +199,8 @@ chapterInput.addEventListener('change', () => {
   chapterInput.value = v;
   state.upTo = v;
   state.chatHistory = [];
+  state.recapHistory = [];
+  state.photoHistory = [];
 });
 
 // --- Tab switching ---
@@ -257,10 +259,18 @@ $('btn-cfg-save').addEventListener('click', async () => {
   setTimeout(() => { status.style.display = 'none'; }, 2500);
 });
 
+function clearFollowThread(panel) {
+  $(`${panel}-follow`).classList.add('hidden');
+  $(`${panel}-follow-messages`).innerHTML = '';
+  if (panel === 'recap') state.recapHistory = [];
+  else state.photoHistory = [];
+}
+
 function clearPanels() {
   $('recap-output').innerHTML = '';
   $('recap-output').classList.add('empty');
   $('chat-messages').innerHTML = '';
+  clearFollowThread('recap');
   clearPhoto();
 }
 
@@ -270,10 +280,11 @@ $('btn-recap').addEventListener('click', doRecap);
 async function doRecap() {
   if (!state.book || state.streaming) return;
   switchTab('recap');
+  clearFollowThread('recap');
+
   const out = $('recap-output');
-  out.innerHTML = '';
-  out.classList.remove('empty');
   out.innerHTML = '<div class="loader"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  out.classList.remove('empty');
 
   state.streaming = true;
   let text = '';
@@ -289,20 +300,27 @@ async function doRecap() {
   });
 
   state.streaming = false;
+
+  // Seed follow-up conversation with this recap as context
+  if (text) {
+    state.recapHistory = [
+      { role: 'user', content: `Give me a "previously on" recap of "${state.book.name}" up to chapter ${state.upTo}.` },
+      { role: 'assistant', content: text },
+    ];
+    $('recap-follow-messages').innerHTML = '';
+    $('recap-follow').classList.remove('hidden');
+  }
 }
 
-// --- Chat ---
-const chatInput = $('chat-input');
-const btnSend   = $('btn-send');
+// --- Chat (Ask tab) ---
+const chatInput    = $('chat-input');
+const btnSend      = $('btn-send');
 const chatMessages = $('chat-messages');
 
 $('btn-ask').addEventListener('click', () => switchTab('chat'));
 
 chatInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendChat();
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 btnSend.addEventListener('click', sendChat);
 
@@ -318,11 +336,10 @@ async function sendChat() {
   chatInput.style.height = 'auto';
 
   state.chatHistory.push({ role: 'user', content: msg });
-  appendMessage('user', msg);
+  appendMessage(chatMessages, 'user', msg);
 
-  const assistantEl = appendMessage('assistant', '');
+  const assistantEl = appendMessage(chatMessages, 'assistant', '');
   assistantEl.classList.add('streaming');
-
   btnSend.disabled = true;
   state.streaming = true;
   let reply = '';
@@ -344,18 +361,69 @@ async function sendChat() {
   btnSend.disabled = false;
 }
 
-function appendMessage(role, text) {
+function appendMessage(container, role, text) {
   const el = document.createElement('div');
   el.className = `message ${role}`;
   el.innerHTML = text ? renderMarkdown(text) : '';
-  chatMessages.appendChild(el);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
   return el;
 }
 
+// --- Follow-up threads (recap + photo) ---
+
+async function sendFollowUp(panel) {
+  const inputEl   = $(`${panel}-follow-input`);
+  const msgsEl    = $(`${panel}-follow-messages`);
+  const sendEl    = $(`${panel}-follow-send`);
+  const history   = panel === 'recap' ? state.recapHistory : state.photoHistory;
+
+  const msg = inputEl.value.trim();
+  if (!msg || !state.book || state.streaming) return;
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+
+  history.push({ role: 'user', content: msg });
+  appendMessage(msgsEl, 'user', msg);
+
+  const assistantEl = appendMessage(msgsEl, 'assistant', '');
+  assistantEl.classList.add('streaming');
+  sendEl.disabled = true;
+  state.streaming = true;
+  let reply = '';
+
+  await streamSSE('/api/chat', {
+    file_id: state.book.id,
+    title: state.book.name,
+    chapter_count: state.upTo,
+    messages: history,
+  }, chunk => {
+    reply += chunk;
+    assistantEl.innerHTML = renderMarkdown(reply);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  });
+
+  assistantEl.classList.remove('streaming');
+  history.push({ role: 'assistant', content: reply });
+  state.streaming = false;
+  sendEl.disabled = false;
+}
+
+['recap', 'photo'].forEach(panel => {
+  $(`${panel}-follow-send`).addEventListener('click', () => sendFollowUp(panel));
+  $(`${panel}-follow-input`).addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendFollowUp(panel); }
+  });
+  $(`${panel}-follow-input`).addEventListener('input', () => {
+    const el = $(`${panel}-follow-input`);
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  });
+});
+
 // --- Photo ---
-const photoInput  = $('photo-input');
-const photoPreview = $('photo-preview');
+const photoInput    = $('photo-input');
+const photoPreview  = $('photo-preview');
 const photoDetected = $('photo-detected');
 const photoQuestion = $('photo-question');
 
@@ -383,12 +451,12 @@ function loadPhoto(file) {
   const reader = new FileReader();
   reader.onload = e => {
     const dataUrl = e.target.result;
-    // strip "data:image/...;base64,"
     state.photoB64 = dataUrl.split(',')[1];
     photoPreview.innerHTML = `<img src="${dataUrl}" alt="book page">`;
     photoPreview.classList.remove('hidden');
     photoDetected.classList.add('hidden');
     photoDetected.textContent = '';
+    clearFollowThread('photo');
   };
   reader.readAsDataURL(file);
 }
@@ -399,6 +467,9 @@ function clearPhoto() {
   photoPreview.classList.add('hidden');
   photoDetected.classList.add('hidden');
   photoQuestion.value = '';
+  $('photo-output').classList.add('hidden');
+  $('photo-output').innerHTML = '';
+  clearFollowThread('photo');
 }
 
 $('btn-photo-explain').addEventListener('click', () => doPhotoAction('explain'));
@@ -406,8 +477,12 @@ $('btn-photo-recap').addEventListener('click', () => doPhotoAction('recap'));
 
 async function doPhotoAction(mode) {
   if (!state.book || !state.photoB64 || state.streaming) return;
+  clearFollowThread('photo');
+
   const question = photoQuestion.value.trim() ||
-    (mode === 'recap' ? 'Give me a full recap of everything up to this point.' : "What's happening in this passage? Explain it clearly in plain English.");
+    (mode === 'recap'
+      ? 'Give me a full recap of everything up to this point.'
+      : "What's happening in this passage? Explain it clearly in plain English.");
 
   const out = $('photo-output');
   out.innerHTML = '<div class="loader"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
@@ -415,22 +490,23 @@ async function doPhotoAction(mode) {
 
   state.streaming = true;
   let text = '';
+  let detectedChapter = state.upTo;
 
   const endpoint = mode === 'recap' ? '/api/photo-recap' : '/api/photo';
   const body = {
     file_id: state.book.id,
     title: state.book.name,
-    chapter_count: -1,  // auto-detect from photo
+    chapter_count: -1,
     image_b64: state.photoB64,
     media_type: state.photoMediaType,
     question,
   };
 
-  await streamSSE(endpoint, body, (chunk, raw) => {
-    // Check for chapter_detected event
+  await streamSSE(endpoint, body, (chunk) => {
     try {
       const evt = JSON.parse(chunk);
       if (evt.chapter_detected) {
+        detectedChapter = evt.chapter_detected;
         photoDetected.textContent = `📍 Detected: up to chapter ${evt.chapter_detected}`;
         photoDetected.classList.remove('hidden');
         return;
@@ -443,6 +519,24 @@ async function doPhotoAction(mode) {
   });
 
   state.streaming = false;
+
+  // Seed follow-up with the photo + question as first exchange
+  if (text) {
+    state.photoHistory = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: state.photoMediaType, data: state.photoB64 } },
+          { type: 'text', text: question },
+        ],
+      },
+      { role: 'assistant', content: text },
+    ];
+    // Use detected chapter for subsequent follow-ups
+    state.upTo = detectedChapter;
+    $('photo-follow-messages').innerHTML = '';
+    $('photo-follow').classList.remove('hidden');
+  }
 }
 
 // --- SSE streaming helper ---
