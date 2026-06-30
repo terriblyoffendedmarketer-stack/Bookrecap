@@ -1,20 +1,25 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	// filepath removed — frontend is now embedded in the binary
 
 	"github.com/gorilla/securecookie"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
+
+//go:embed frontend
+var frontendFS embed.FS
 
 var sc *securecookie.SecureCookie
 
@@ -392,21 +397,20 @@ func mask(s string) string {
 	return s[:4] + strings.Repeat("•", len(s)-4)
 }
 
-// --- Static files ---
+// --- Static files (embedded into binary) ---
 
-func handleStatic(frontendDir string) http.HandlerFunc {
+func handleStatic() http.HandlerFunc {
+	sub, err := fs.Sub(frontendFS, "frontend")
+	if err != nil {
+		log.Fatalf("failed to sub frontend fs: %v", err)
+	}
+	fileServer := http.FileServer(http.FS(sub))
 	return func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/" {
-			path = "/index.html"
+		// Serve index.html for root
+		if r.URL.Path == "/" {
+			r.URL.Path = "/index.html"
 		}
-		fp := filepath.Join(frontendDir, filepath.Clean(path))
-		// Security: ensure we stay within frontend dir
-		if !strings.HasPrefix(fp, frontendDir) {
-			http.NotFound(w, r)
-			return
-		}
-		http.ServeFile(w, r, fp)
+		fileServer.ServeHTTP(w, r)
 	}
 }
 
@@ -416,11 +420,6 @@ func main() {
 	godotenv.Load() // optional: load .env if present (for local dev convenience)
 	initDB()
 	initSC()
-
-	frontendDir, _ := filepath.Abs("frontend")
-	if d := os.Getenv("FRONTEND_DIR"); d != "" {
-		frontendDir = d
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", handleConfigGet)
@@ -435,7 +434,7 @@ func main() {
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
 	mux.HandleFunc("POST /api/photo-recap", handlePhotoRecap)
-	mux.HandleFunc("/", handleStatic(frontendDir))
+	mux.HandleFunc("/", handleStatic())
 
 	port := os.Getenv("PORT")
 	if port == "" {
