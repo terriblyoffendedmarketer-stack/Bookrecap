@@ -35,10 +35,30 @@ func initDB() {
 			title     TEXT NOT NULL,
 			chapters  TEXT NOT NULL,
 			cached_at INTEGER NOT NULL
-		)
+		);
+		CREATE TABLE IF NOT EXISTS config (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
 	`)
 	if err != nil {
-		log.Fatalf("failed to create table: %v", err)
+		log.Fatalf("failed to create tables: %v", err)
+	}
+}
+
+func getConfigVal(key string) string {
+	row := db.QueryRow("SELECT value FROM config WHERE key = ?", key)
+	var val string
+	if err := row.Scan(&val); err != nil {
+		return ""
+	}
+	return val
+}
+
+func setConfigVal(key, value string) {
+	_, err := db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", key, value)
+	if err != nil {
+		log.Printf("config write error: %v", err)
 	}
 }
 

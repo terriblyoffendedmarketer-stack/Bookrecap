@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -21,10 +20,11 @@ var driveScopes = []string{
 }
 
 func oauthConfig() *oauth2.Config {
+	cfg := loadConfig()
 	return &oauth2.Config{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URI"),
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		RedirectURL:  cfg.GoogleRedirectURI,
 		Scopes:       driveScopes,
 		Endpoint:     google.Endpoint,
 	}

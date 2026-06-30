@@ -16,6 +16,7 @@ const state = {
 
 // --- DOM refs ---
 const $ = id => document.getElementById(id);
+const setupScreen  = $('setup-screen');
 const loginScreen  = $('login-screen');
 const appScreen    = $('app-screen');
 const userEmail    = $('user-email');
@@ -34,6 +35,14 @@ const tabs         = document.querySelectorAll('.tab');
 
 // --- Init ---
 async function init() {
+  // Check if server is configured first
+  const cfgRes = await fetch('/api/config');
+  const cfg = await cfgRes.json();
+  if (!cfg.ready) {
+    showSetup(cfg);
+    return;
+  }
+
   const res = await fetch('/auth/status');
   const data = await res.json();
   if (data.authed) {
@@ -45,17 +54,61 @@ async function init() {
   }
 }
 
+function showSetup(cfg) {
+  setupScreen.classList.remove('hidden');
+  loginScreen.classList.add('hidden');
+  appScreen.classList.add('hidden');
+  // Pre-fill any existing values
+  if (cfg.google_client_id) $('setup-gcid').value = cfg.google_client_id;
+  if (cfg.google_redirect_uri) $('setup-redirect').value = cfg.google_redirect_uri;
+  else $('setup-redirect').value = window.location.origin + '/auth/callback';
+}
+
 function showLogin() {
+  setupScreen.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   appScreen.classList.add('hidden');
 }
 
 function showApp() {
+  setupScreen.classList.add('hidden');
   loginScreen.classList.add('hidden');
   appScreen.classList.remove('hidden');
   userEmail.textContent = state.email;
   switchTab('recap');
 }
+
+// --- Setup screen ---
+$('btn-setup-save').addEventListener('click', async () => {
+  const btn = $('btn-setup-save');
+  const err = $('setup-error');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  const body = {
+    anthropic_api_key:    $('setup-anthropic').value.trim(),
+    google_client_id:     $('setup-gcid').value.trim(),
+    google_client_secret: $('setup-gcsecret').value.trim(),
+    google_redirect_uri:  $('setup-redirect').value.trim() || window.location.origin + '/auth/callback',
+  };
+
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  btn.textContent = 'Save & Continue';
+
+  if (data.ready) {
+    showLogin();
+  } else {
+    err.textContent = 'Missing required fields. Please fill in all keys.';
+    err.style.display = 'block';
+  }
+});
 
 // --- Book search ---
 let searchTimer;
@@ -149,6 +202,8 @@ chapterInput.addEventListener('change', () => {
 });
 
 // --- Tab switching ---
+const settingsPanel = $('panel-settings');
+
 tabs.forEach(tab => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
@@ -159,7 +214,46 @@ function switchTab(name) {
   recapPanel.classList.toggle('hidden', name !== 'recap');
   chatPanel.classList.toggle('hidden', name !== 'chat');
   photoPanel.classList.toggle('hidden', name !== 'photo');
+  settingsPanel.classList.toggle('hidden', name !== 'settings');
+  if (name === 'settings') loadSettingsPanel();
 }
+
+async function loadSettingsPanel() {
+  const res = await fetch('/api/config');
+  const cfg = await res.json();
+  $('cfg-gcid').value = cfg.google_client_id || '';
+  $('cfg-gcsecret').value = cfg.google_client_secret || '';
+  $('cfg-redirect').value = cfg.google_redirect_uri || '';
+  $('cfg-anthropic').value = cfg.anthropic_api_key || '';
+}
+
+$('btn-cfg-save').addEventListener('click', async () => {
+  const btn = $('btn-cfg-save');
+  const status = $('cfg-status');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  status.style.display = 'none';
+
+  const body = {
+    anthropic_api_key:    $('cfg-anthropic').value.trim(),
+    google_client_id:     $('cfg-gcid').value.trim(),
+    google_client_secret: $('cfg-gcsecret').value.trim(),
+    google_redirect_uri:  $('cfg-redirect').value.trim(),
+  };
+
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  status.textContent = '✓ Saved';
+  status.style.color = '#7c6af7';
+  status.style.display = 'block';
+  setTimeout(() => { status.style.display = 'none'; }, 2500);
+});
 
 function clearPanels() {
   $('recap-output').innerHTML = '';

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -102,7 +101,7 @@ func streamClaude(w io.Writer, flush func(), req claudeRequest) error {
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequest("POST", claudeAPI, bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
+	httpReq.Header.Set("x-api-key", loadConfig().AnthropicAPIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := http.DefaultClient.Do(httpReq)
@@ -228,7 +227,7 @@ func IdentifyChapterFromImage(imageB64, mediaType string) (string, error) {
 	body, _ := json.Marshal(req)
 	httpReq, _ := http.NewRequest("POST", claudeAPI, bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
+	httpReq.Header.Set("x-api-key", loadConfig().AnthropicAPIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := http.DefaultClient.Do(httpReq)

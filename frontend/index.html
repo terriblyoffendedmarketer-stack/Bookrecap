@@ -11,6 +11,33 @@
 </head>
 <body>
 
+<!-- Setup screen (first-time config) -->
+<div id="setup-screen" class="login-screen hidden">
+  <div class="icon">⚙️</div>
+  <h2>Set up BookRecap</h2>
+  <p>Enter your API keys once and they'll be saved permanently on this server.</p>
+  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:12px;margin-top:8px;">
+    <div>
+      <div class="label">Anthropic API Key</div>
+      <input id="setup-anthropic" class="search-input" type="password" placeholder="sk-ant-..." autocomplete="off">
+    </div>
+    <div>
+      <div class="label">Google Client ID</div>
+      <input id="setup-gcid" class="search-input" type="text" placeholder="....apps.googleusercontent.com" autocomplete="off">
+    </div>
+    <div>
+      <div class="label">Google Client Secret</div>
+      <input id="setup-gcsecret" class="search-input" type="password" placeholder="GOCSPX-..." autocomplete="off">
+    </div>
+    <div>
+      <div class="label">Redirect URI</div>
+      <input id="setup-redirect" class="search-input" type="text" placeholder="http://localhost:8080/auth/callback" autocomplete="off">
+    </div>
+    <button id="btn-setup-save" class="btn-primary" style="margin-top:4px;">Save & Continue</button>
+    <div id="setup-error" style="color:#f77c7c;font-size:13px;text-align:center;display:none;"></div>
+  </div>
+</div>
+
 <!-- Login screen -->
 <div id="login-screen" class="login-screen hidden">
   <div class="icon">📚</div>
@@ -135,6 +162,31 @@
       </div>
     </div>
 
+    <!-- SETTINGS PANEL -->
+    <div id="panel-settings" class="hidden">
+      <div class="label" style="margin-bottom:16px;">API Keys</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <div class="label">Anthropic API Key</div>
+          <input id="cfg-anthropic" class="search-input" type="password" placeholder="sk-ant-..." autocomplete="off">
+        </div>
+        <div>
+          <div class="label">Google Client ID</div>
+          <input id="cfg-gcid" class="search-input" type="text" placeholder="....apps.googleusercontent.com" autocomplete="off">
+        </div>
+        <div>
+          <div class="label">Google Client Secret</div>
+          <input id="cfg-gcsecret" class="search-input" type="password" placeholder="GOCSPX-..." autocomplete="off">
+        </div>
+        <div>
+          <div class="label">Redirect URI</div>
+          <input id="cfg-redirect" class="search-input" type="text" placeholder="http://localhost:8080/auth/callback" autocomplete="off">
+        </div>
+        <button id="btn-cfg-save" class="btn-primary" style="margin-top:4px;">Save</button>
+        <div id="cfg-status" style="font-size:13px;text-align:center;display:none;"></div>
+      </div>
+    </div>
+
   </div><!-- /main -->
 
   <!-- Tab bar -->
@@ -150,6 +202,10 @@
     <button class="tab" data-tab="photo">
       <span class="icon">📷</span>
       <span>Photo</span>
+    </button>
+    <button class="tab" data-tab="settings">
+      <span class="icon">⚙️</span>
+      <span>Settings</span>
     </button>
   </div>
 

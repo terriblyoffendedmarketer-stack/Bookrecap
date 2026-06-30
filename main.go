@@ -1,28 +1,34 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	// filepath removed — frontend is now embedded in the binary
 
 	"github.com/gorilla/securecookie"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
 
+//go:embed frontend
+var frontendFS embed.FS
+
 var sc *securecookie.SecureCookie
 
-func init() {
-	godotenv.Load()
-	hashKey := []byte(padKey(os.Getenv("SECRET_KEY"), 32))
-	blockKey := []byte(padKey(os.Getenv("SECRET_BLOCK_KEY"), 32))
-	sc = securecookie.New(hashKey, blockKey)
+func initSC() {
+	cfg := loadConfig()
+	sc = securecookie.New(
+		[]byte(padKey(cfg.SecretKey, 32)),
+		[]byte(padKey(cfg.SecretBlockKey, 32)),
+	)
 }
 
 func padKey(s string, n int) string {
@@ -343,35 +349,81 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- Static files ---
+// --- Config API ---
 
-func handleStatic(frontendDir string) http.HandlerFunc {
+func handleConfigGet(w http.ResponseWriter, r *http.Request) {
+	cfg := loadConfig()
+	// Never send secret keys; mask the client secret and API key after the first 4 chars
+	writeJSON(w, map[string]interface{}{
+		"google_client_id":      cfg.GoogleClientID,
+		"google_client_secret":  mask(cfg.GoogleClientSecret),
+		"google_redirect_uri":   cfg.GoogleRedirectURI,
+		"anthropic_api_key":     mask(cfg.AnthropicAPIKey),
+		"ready":                 configReady(),
+	})
+}
+
+func handleConfigSave(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		GoogleClientID     string `json:"google_client_id"`
+		GoogleClientSecret string `json:"google_client_secret"`
+		GoogleRedirectURI  string `json:"google_redirect_uri"`
+		AnthropicAPIKey    string `json:"anthropic_api_key"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if body.GoogleClientID != "" {
+		setConfigVal("google_client_id", body.GoogleClientID)
+	}
+	// Only overwrite secret/key if user sent a real value (not a masked placeholder)
+	if body.GoogleClientSecret != "" && !strings.HasPrefix(body.GoogleClientSecret, "••") {
+		setConfigVal("google_client_secret", body.GoogleClientSecret)
+	}
+	if body.GoogleRedirectURI != "" {
+		setConfigVal("google_redirect_uri", body.GoogleRedirectURI)
+	}
+	if body.AnthropicAPIKey != "" && !strings.HasPrefix(body.AnthropicAPIKey, "••") {
+		setConfigVal("anthropic_api_key", body.AnthropicAPIKey)
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "ready": configReady()})
+}
+
+func mask(s string) string {
+	if len(s) <= 4 {
+		return strings.Repeat("•", len(s))
+	}
+	return s[:4] + strings.Repeat("•", len(s)-4)
+}
+
+// --- Static files (embedded into binary) ---
+
+func handleStatic() http.HandlerFunc {
+	sub, err := fs.Sub(frontendFS, "frontend")
+	if err != nil {
+		log.Fatalf("failed to sub frontend fs: %v", err)
+	}
+	fileServer := http.FileServer(http.FS(sub))
 	return func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/" {
-			path = "/index.html"
+		// Serve index.html for root
+		if r.URL.Path == "/" {
+			r.URL.Path = "/index.html"
 		}
-		fp := filepath.Join(frontendDir, filepath.Clean(path))
-		// Security: ensure we stay within frontend dir
-		if !strings.HasPrefix(fp, frontendDir) {
-			http.NotFound(w, r)
-			return
-		}
-		http.ServeFile(w, r, fp)
+		fileServer.ServeHTTP(w, r)
 	}
 }
 
 // --- Main ---
 
 func main() {
+	godotenv.Load() // optional: load .env if present (for local dev convenience)
 	initDB()
-
-	frontendDir, _ := filepath.Abs("frontend")
-	if d := os.Getenv("FRONTEND_DIR"); d != "" {
-		frontendDir = d
-	}
+	initSC()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/config", handleConfigGet)
+	mux.HandleFunc("POST /api/config", handleConfigSave)
 	mux.HandleFunc("GET /auth/login", handleAuthLogin)
 	mux.HandleFunc("GET /auth/callback", handleAuthCallback)
 	mux.HandleFunc("GET /auth/status", handleAuthStatus)
@@ -382,7 +434,7 @@ func main() {
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
 	mux.HandleFunc("POST /api/photo-recap", handlePhotoRecap)
-	mux.HandleFunc("/", handleStatic(frontendDir))
+	mux.HandleFunc("/", handleStatic())
 
 	port := os.Getenv("PORT")
 	if port == "" {
