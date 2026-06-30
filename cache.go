@@ -1,0 +1,67 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Chapter struct {
+	Index int    `json:"index"`
+	Title string `json:"title"`
+	Text  string `json:"text"`
+}
+
+var db *sql.DB
+
+func initDB() {
+	dbPath := filepath.Join(os.Getenv("DATA_DIR"), "cache.db")
+	if os.Getenv("DATA_DIR") == "" {
+		dbPath = "cache.db"
+	}
+	var err error
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		log.Fatalf("failed to open sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS books (
+			file_id   TEXT PRIMARY KEY,
+			title     TEXT NOT NULL,
+			chapters  TEXT NOT NULL,
+			cached_at INTEGER NOT NULL
+		)
+	`)
+	if err != nil {
+		log.Fatalf("failed to create table: %v", err)
+	}
+}
+
+func getChapters(fileID string) ([]Chapter, bool) {
+	row := db.QueryRow("SELECT chapters FROM books WHERE file_id = ?", fileID)
+	var raw string
+	if err := row.Scan(&raw); err != nil {
+		return nil, false
+	}
+	var chapters []Chapter
+	if err := json.Unmarshal([]byte(raw), &chapters); err != nil {
+		return nil, false
+	}
+	return chapters, true
+}
+
+func setChapters(fileID, title string, chapters []Chapter) {
+	raw, _ := json.Marshal(chapters)
+	_, err := db.Exec(`
+		INSERT OR REPLACE INTO books (file_id, title, chapters, cached_at)
+		VALUES (?, ?, ?, ?)
+	`, fileID, title, string(raw), time.Now().Unix())
+	if err != nil {
+		log.Printf("cache write error: %v", err)
+	}
+}

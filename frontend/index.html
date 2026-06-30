@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f0f0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>BookRecap</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen" class="login-screen hidden">
+  <div class="icon">📚</div>
+  <h2>BookRecap</h2>
+  <p>Your personal reading assistant. Recaps, explanations, and more — pulled straight from your Google Drive library.</p>
+  <a href="/auth/login" class="btn-primary">Connect Google Drive</a>
+</div>
+
+<!-- App -->
+<div id="app-screen" class="hidden" style="display:flex;flex-direction:column;height:100dvh;">
+
+  <div class="header">
+    <div>
+      <div class="header" style="padding:0;border:none;">
+        <h1>📚 BookRecap</h1>
+      </div>
+      <div class="subtitle" id="user-email"></div>
+    </div>
+    <a href="/auth/logout" class="btn-logout">Sign out</a>
+  </div>
+
+  <div class="main">
+
+    <!-- Book picker -->
+    <div class="section book-picker">
+      <!-- Search (shown when no book selected) -->
+      <div id="search-section">
+        <div class="label">Your library</div>
+        <div class="search-wrap">
+          <input id="search-input" class="search-input" type="text" placeholder="Search for a book…" autocomplete="off" spellcheck="false">
+          <div id="search-dropdown" class="dropdown hidden"></div>
+        </div>
+      </div>
+
+      <!-- Selected book card -->
+      <div id="book-card" class="book-card hidden">
+        <div class="book-icon">📖</div>
+        <div class="book-info">
+          <div id="book-title" class="book-title"></div>
+          <div id="book-chapters" class="book-chapters"></div>
+        </div>
+        <button id="btn-change-book" class="btn-change">Change</button>
+      </div>
+
+      <!-- Chapter selector -->
+      <div id="chapter-row" class="chapter-row hidden">
+        <label for="chapter-input">I've read up to chapter</label>
+        <input id="chapter-input" class="chapter-input" type="number" min="1" value="1">
+      </div>
+
+      <!-- Action buttons -->
+      <div id="action-row" class="action-row hidden">
+        <button class="action-btn" id="btn-recap" onclick="">
+          <span class="icon">⏪</span>
+          <span>Recap</span>
+        </button>
+        <button class="action-btn" id="btn-ask">
+          <span class="icon">💬</span>
+          <span>Ask</span>
+        </button>
+        <button class="action-btn" id="btn-photo">
+          <span class="icon">📷</span>
+          <span>Photo</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- RECAP PANEL -->
+    <div id="panel-recap" class="hidden">
+      <div class="label">Recap</div>
+      <div id="recap-output" class="recap-output empty" style="min-height:120px;color:#888;font-style:italic;">
+        Pick a book and tap Recap to get started.
+      </div>
+    </div>
+
+    <!-- CHAT PANEL -->
+    <div id="panel-chat" class="hidden">
+      <div id="chat-messages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          rows="1"
+          placeholder="Ask anything about the book…"
+        ></textarea>
+        <button id="btn-send" class="btn-send" aria-label="Send">➤</button>
+      </div>
+    </div>
+
+    <!-- PHOTO PANEL -->
+    <div id="panel-photo" class="hidden">
+      <div class="photo-area">
+        <div class="label">Photo of your page</div>
+
+        <div id="photo-drop" class="photo-drop">
+          <div class="icon">📷</div>
+          <div style="font-size:15px;font-weight:600;">Take a photo or upload</div>
+          <div class="hint">Point your camera at your Kindle or book page</div>
+          <input id="photo-input" type="file" accept="image/*" capture="environment" style="display:none">
+        </div>
+
+        <div id="photo-preview" class="photo-preview hidden"></div>
+        <div id="photo-detected" class="photo-detected hidden"></div>
+
+        <input
+          id="photo-question"
+          class="photo-question"
+          type="text"
+          placeholder="What do you want to know? (optional)"
+        >
+
+        <div class="photo-actions">
+          <button id="btn-photo-explain" class="btn-primary" style="font-size:14px;">
+            <span>💬</span> Explain this
+          </button>
+          <button id="btn-photo-recap" class="btn-primary" style="font-size:14px;background:#3d3468;border:1px solid #7c6af7;">
+            <span>⏪</span> Recap to here
+          </button>
+        </div>
+
+        <div id="photo-output" class="recap-output hidden" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab active" data-tab="recap">
+      <span class="icon">⏪</span>
+      <span>Recap</span>
+    </button>
+    <button class="tab" data-tab="chat">
+      <span class="icon">💬</span>
+      <span>Ask</span>
+    </button>
+    <button class="tab" data-tab="photo">
+      <span class="icon">📷</span>
+      <span>Photo</span>
+    </button>
+  </div>
+
+</div><!-- /app -->
+
+<script src="/app.js"></script>
+</body>
+</html>
