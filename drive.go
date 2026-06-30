@@ -108,6 +108,9 @@ func searchBooks(token *oauth2.Token, query string) ([]DriveFile, error) {
 		Fields("files(id,name,mimeType)").
 		PageSize(100).
 		OrderBy("viewedByMeTime desc").
+		IncludeItemsFromAllDrives(true).
+		SupportsAllDrives(true).
+		Corpora("allDrives").
 		Do()
 	if err != nil {
 		return nil, fmt.Errorf("drive list: %w", err)
@@ -150,6 +153,8 @@ func collectFolderIDs(svc *drive.Service, rootID string) []string {
 			Q(fmt.Sprintf("'%s' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false", cur)).
 			Fields("files(id)").
 			PageSize(100).
+			IncludeItemsFromAllDrives(true).
+			SupportsAllDrives(true).
 			Do()
 		if err != nil {
 			break
