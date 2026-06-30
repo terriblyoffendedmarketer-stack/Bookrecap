@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+buildCommand = "go build -o bookrecap ."
 
 [deploy]
 startCommand = "./bookrecap"
