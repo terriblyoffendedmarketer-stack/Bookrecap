@@ -47,15 +47,23 @@ func configVal(key string) string {
 }
 
 func getOrCreateSecret(key string) string {
-	val := getConfigVal(key)
-	if val != "" {
+	if val := getConfigVal(key); val != "" {
 		return val
+	}
+	envMap := map[string]string{
+		"secret_key":       "SECRET_KEY",
+		"secret_block_key": "SECRET_BLOCK_KEY",
+	}
+	if env, ok := envMap[key]; ok {
+		if v := os.Getenv(env); v != "" {
+			return v
+		}
 	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		log.Fatalf("failed to generate secret: %v", err)
 	}
-	val = hex.EncodeToString(b)
+	val := hex.EncodeToString(b)
 	setConfigVal(key, val)
 	return val
 }
