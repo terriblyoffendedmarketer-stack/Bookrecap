@@ -39,6 +39,7 @@ func configVal(key string) string {
 		"google_client_secret": "GOOGLE_CLIENT_SECRET",
 		"google_redirect_uri":  "GOOGLE_REDIRECT_URI",
 		"anthropic_api_key":    "ANTHROPIC_API_KEY",
+		"drive_folder_id":      "DRIVE_FOLDER_ID",
 	}
 	if env, ok := envMap[key]; ok {
 		return os.Getenv(env)
