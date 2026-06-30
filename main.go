@@ -404,11 +404,18 @@ func handleStatic() http.HandlerFunc {
 	if err != nil {
 		log.Fatalf("failed to sub frontend fs: %v", err)
 	}
+	// Read index.html once at startup to serve directly (avoids http.FileServer
+	// redirecting /index.html → / which causes an infinite redirect loop).
+	indexHTML, err := fs.ReadFile(frontendFS, "frontend/index.html")
+	if err != nil {
+		log.Fatalf("failed to read embedded index.html: %v", err)
+	}
 	fileServer := http.FileServer(http.FS(sub))
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Serve index.html for root
 		if r.URL.Path == "/" {
-			r.URL.Path = "/index.html"
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(indexHTML)
+			return
 		}
 		fileServer.ServeHTTP(w, r)
 	}
@@ -443,4 +450,3 @@ func main() {
 	log.Printf("BookRecap running on http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
-
