@@ -8,10 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
-	// filepath removed — frontend is now embedded in the binary
 
 	"github.com/gorilla/securecookie"
 	"github.com/joho/godotenv"
@@ -254,6 +252,23 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// detectChapter resolves which chapter the photo corresponds to.
+// If hint >= 1 it's taken as-is; otherwise the image is sent to Claude for OCR
+// and the extracted text is matched against cached chapter content.
+// Falls back to the last chapter if detection fails.
+func detectChapter(chapters []Chapter, imageB64, mediaType string, hint int) int {
+	if hint >= 1 {
+		return hint
+	}
+	upTo := len(chapters)
+	if snippet, err := IdentifyChapterFromImage(imageB64, mediaType); err == nil && snippet != "" {
+		if n := findChapterForText(chapters, snippet); n > 0 {
+			upTo = n
+		}
+	}
+	return upTo
+}
+
 func handlePhoto(w http.ResponseWriter, r *http.Request) {
 	sess := requireSession(w, r)
 	if sess == nil {
@@ -284,21 +299,10 @@ func handlePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upTo := body.ChapterCount
-	// Auto-detect chapter position from image
-	if upTo <= 0 {
-		snippet, err := IdentifyChapterFromImage(body.ImageB64, body.MediaType)
-		if err == nil && snippet != "" {
-			upTo = findChapterForText(chapters, snippet)
-		}
-		if upTo <= 0 {
-			upTo = len(chapters)
-		}
-	}
+	upTo := detectChapter(chapters, body.ImageB64, body.MediaType, body.ChapterCount)
 
 	sseHeaders(w)
-	// Send the detected chapter back as first SSE event so UI can display it
-	fmt.Fprintf(w, "data: {\"chapter_detected\":%s}\n\n", strconv.Itoa(upTo))
+	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
 	flusher(w)()
 
 	flush := flusher(w)
@@ -333,11 +337,7 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upTo := len(chapters)
-	snippet, err := IdentifyChapterFromImage(body.ImageB64, body.MediaType)
-	if err == nil && snippet != "" {
-		upTo = findChapterForText(chapters, snippet)
-	}
+	upTo := detectChapter(chapters, body.ImageB64, body.MediaType, -1)
 
 	sseHeaders(w)
 	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
