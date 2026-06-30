@@ -441,6 +441,21 @@ body {
 .tab .icon { font-size: 22px; }
 .tab.active { color: var(--accent); }
 
+/* --- Follow-up thread (appears below recap/photo output) --- */
+.follow-thread {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.follow-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* --- Misc --- */
 .hidden { display: none !important; }
 .section { margin-bottom: 20px; }
