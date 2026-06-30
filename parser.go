@@ -251,20 +251,25 @@ func splitIntoChapters(text string) []Chapter {
 	return chapters
 }
 
-// findChapterForText searches cached chapters for the given text snippet
-// and returns the 1-based chapter index (or 1 if not found).
-func findChapterForText(chapters []Chapter, snippet string) int {
+// findChapterPosition searches cached chapters for the given text snippet and
+// returns the 1-based chapter index plus the character offset within that
+// chapter's text where the snippet ends — i.e. how far into the chapter the
+// reader has actually gotten. Offset is -1 when only the chapter (not the
+// exact position) could be determined, signaling the caller to treat the
+// whole chapter as read rather than guess a cutoff.
+func findChapterPosition(chapters []Chapter, snippet string) (int, int) {
 	if len(snippet) < 10 {
-		return 1
+		return 1, -1
 	}
 	snippet = strings.ToLower(strings.TrimSpace(snippet))
-	// Try exact substring first
+	// Try exact substring first — gives us a precise in-chapter offset.
 	for _, ch := range chapters {
-		if strings.Contains(strings.ToLower(ch.Text), snippet) {
-			return ch.Index
+		lower := strings.ToLower(ch.Text)
+		if idx := strings.Index(lower, snippet); idx >= 0 {
+			return ch.Index, idx + len(snippet)
 		}
 	}
-	// Fuzzy: score by shared 6-grams
+	// Fuzzy fallback: score by shared 6-grams. No reliable offset here.
 	best, bestScore := 1, 0
 	ngrams := makeNgrams(snippet, 6)
 	for _, ch := range chapters {
@@ -274,7 +279,7 @@ func findChapterForText(chapters []Chapter, snippet string) int {
 			best = ch.Index
 		}
 	}
-	return best
+	return best, -1
 }
 
 func makeNgrams(s string, n int) map[string]bool {

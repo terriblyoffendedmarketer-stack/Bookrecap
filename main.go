@@ -252,21 +252,24 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// detectChapter resolves which chapter the photo corresponds to.
-// If hint >= 1 it's taken as-is; otherwise the image is sent to Claude for OCR
-// and the extracted text is matched against cached chapter content.
-// Falls back to the last chapter if detection fails.
-func detectChapter(chapters []Chapter, imageB64, mediaType string, hint int) int {
+// detectChapter resolves which chapter the photo corresponds to, plus how far
+// into that chapter's text the reader has gotten (a character offset, or -1
+// if the whole chapter should be treated as read). If hint >= 1 it's taken
+// as-is (the reader manually entered a chapter count, so the whole chapter
+// is fair game); otherwise the image is sent to Claude for OCR and the
+// extracted text is matched against cached chapter content to find the exact
+// in-chapter position, preventing spoilers from later in the same chapter.
+func detectChapter(chapters []Chapter, imageB64, mediaType string, hint int) (int, int) {
 	if hint >= 1 {
-		return hint
+		return hint, -1
 	}
-	upTo := len(chapters)
+	upTo, offset := len(chapters), -1
 	if snippet, err := IdentifyChapterFromImage(imageB64, mediaType); err == nil && snippet != "" {
-		if n := findChapterForText(chapters, snippet); n > 0 {
-			upTo = n
+		if n, off := findChapterPosition(chapters, snippet); n > 0 {
+			upTo, offset = n, off
 		}
 	}
-	return upTo
+	return upTo, offset
 }
 
 func handlePhoto(w http.ResponseWriter, r *http.Request) {
@@ -299,14 +302,15 @@ func handlePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upTo := detectChapter(chapters, body.ImageB64, body.MediaType, body.ChapterCount)
+	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, body.ChapterCount)
+	safeChapters := extractChaptersPartial(chapters, upTo, offset)
 
 	sseHeaders(w)
 	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
 	flusher(w)()
 
 	flush := flusher(w)
-	if err := StreamPhoto(w, flush, body.Title, chapters, upTo, body.ImageB64, body.MediaType, body.Question); err != nil {
+	if err := StreamPhoto(w, flush, body.Title, safeChapters, len(safeChapters), body.ImageB64, body.MediaType, body.Question); err != nil {
 		log.Printf("photo stream error: %v", err)
 	}
 }
@@ -337,14 +341,15 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upTo := detectChapter(chapters, body.ImageB64, body.MediaType, -1)
+	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, -1)
+	safeChapters := extractChaptersPartial(chapters, upTo, offset)
 
 	sseHeaders(w)
 	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
 	flusher(w)()
 
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, chapters, upTo); err != nil {
+	if err := StreamRecap(w, flush, body.Title, safeChapters, len(safeChapters)); err != nil {
 		log.Printf("photo recap stream error: %v", err)
 	}
 }

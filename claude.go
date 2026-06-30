@@ -25,6 +25,27 @@ func extractChapters(chapters []Chapter, upTo int) []Chapter {
 	return chapters[:upTo]
 }
 
+// extractChaptersPartial behaves like extractChapters but additionally truncates
+// the text of the final included chapter to the given character offset, so a
+// reader caught mid-chapter (e.g. via a photo on page 2 of a 20-page chapter)
+// doesn't get spoiled by the rest of that chapter. offset < 0 means no
+// truncation — the whole final chapter is treated as read.
+func extractChaptersPartial(chapters []Chapter, upTo, offset int) []Chapter {
+	safe := extractChapters(chapters, upTo)
+	if offset < 0 || len(safe) == 0 {
+		return safe
+	}
+	last := safe[len(safe)-1]
+	if offset < len(last.Text) {
+		trimmed := make([]Chapter, len(safe))
+		copy(trimmed, safe)
+		last.Text = last.Text[:offset]
+		trimmed[len(trimmed)-1] = last
+		return trimmed
+	}
+	return safe
+}
+
 // buildContext concatenates chapter texts up to a total token budget.
 // Each chapter is capped at maxChapterChars to prevent any single long
 // chapter from eating the whole context.

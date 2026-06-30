@@ -132,7 +132,7 @@ func searchBooks(token *oauth2.Token, query string) ([]DriveFile, error) {
 	for i := range files {
 		files[i].Score = fuzzyScore(strings.ToLower(files[i].Name), q)
 	}
-	sort.Slice(files, func(i, j int) bool {
+	sort.SliceStable(files, func(i, j int) bool {
 		return files[i].Score > files[j].Score
 	})
 	if len(files) > 10 {
@@ -168,20 +168,18 @@ func collectFolderIDs(svc *drive.Service, rootID string) []string {
 }
 
 // buildNameFilter builds a Drive query clause that matches files whose name
-// contains any of the meaningful words in the user's query.
+// contains any of the meaningful words in the user's query. Drive's `contains`
+// operator does prefix matching per word, so even a 2-letter word like "we"
+// is enough to narrow server-side — this matters because without any filter
+// the search falls back to the default PageSize(100) batch ordered by
+// viewedByMeTime, which can silently exclude a book that hasn't been opened
+// recently. Words shorter than 2 chars are skipped as too noisy to filter on.
 func buildNameFilter(query string) string {
 	words := strings.Fields(strings.ToLower(query))
 	var chosen []string
 	for _, w := range words {
-		if len(w) >= 4 {
+		if len(w) >= 2 {
 			chosen = append(chosen, w)
-		}
-	}
-	if len(chosen) == 0 {
-		for _, w := range words {
-			if len(w) >= 3 {
-				chosen = append(chosen, w)
-			}
 		}
 	}
 	if len(chosen) == 0 {
@@ -196,18 +194,22 @@ func buildNameFilter(query string) string {
 }
 
 // fuzzyScore returns how well candidate matches query (higher = better).
+// Ties within a tier (e.g. several titles all starting with "we") are left
+// for the caller to break via a stable sort against Drive's own recency
+// ordering, rather than guessed at here — there's no reliable signal in the
+// name strings alone to prefer one genuine prefix match over another.
 func fuzzyScore(candidate, query string) int {
 	if query == "" {
 		return 1
 	}
 	if candidate == query {
-		return 1000
+		return 10_000
 	}
 	if strings.HasPrefix(candidate, query) {
-		return 900
+		return 9_000
 	}
 	if strings.Contains(candidate, query) {
-		return 500 + len(query)
+		return 5_000 + len(query)
 	}
 	// Word-level prefix matching
 	score := 0
