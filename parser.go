@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -90,11 +91,13 @@ func parseEpub(data []byte) ([]Chapter, error) {
 	var chapters []Chapter
 	chapterRe := regexp.MustCompile(`(?i)chapter|part|section|prologue|epilogue|introduction|preface`)
 	// Some books number their headings independently of the epub spine
-	// (e.g. front matter pushes "Chapter 1" to spine position 6), so a
-	// heading like "10. Bob – August 10, 2133" doesn't match our own
-	// chapter count. Strip that leading number so it can't be mistaken
-	// for — or quoted back as — our chapter index.
-	leadingNumberRe := regexp.MustCompile(`^\d+\.\s*`)
+	// (e.g. unnumbered front matter — title page, dedication, a table of
+	// contents our own fallback mislabels "Chapter N" — pushes the real
+	// "Chapter 1" several spine positions later), so a heading like
+	// "10. Bob – August 10, 2133" doesn't match our own array position.
+	// Capture that embedded number so it can be used as the book's real,
+	// author-assigned chapter number instead of our spine index.
+	leadingNumberRe := regexp.MustCompile(`^(\d+)\.\s*`)
 
 	for _, spineItem := range pkg.Spine.Items {
 		href, ok := idToHref[spineItem.IDRef]
@@ -112,9 +115,24 @@ func parseEpub(data []byte) ([]Chapter, error) {
 		content, _ := io.ReadAll(rc)
 		rc.Close()
 
-		title, text := extractHTMLText(content)
-		title = strings.TrimSpace(leadingNumberRe.ReplaceAllString(title, ""))
+		rawTitle, text := extractHTMLText(content)
+		rawTitle = strings.TrimSpace(rawTitle)
 		text = strings.TrimSpace(text)
+
+		chapterNum := 0
+		if m := leadingNumberRe.FindStringSubmatch(rawTitle); m != nil {
+			chapterNum, _ = strconv.Atoi(m[1])
+		}
+		title := strings.TrimSpace(leadingNumberRe.ReplaceAllString(rawTitle, ""))
+		// HTML text extraction doesn't distinguish the heading from the body,
+		// so the heading (number included) is duplicated as the first line
+		// of the extracted text (e.g. "10. Bob – August 10, 2133" followed by
+		// the actual chapter). Strip it so that number doesn't also reach
+		// Claude embedded in the content itself.
+		if rawTitle != "" && strings.HasPrefix(text, rawTitle) {
+			text = strings.TrimSpace(strings.TrimPrefix(text, rawTitle))
+		}
+
 		if len(text) < 150 {
 			continue // skip nav pages, covers, etc.
 		}
@@ -127,9 +145,10 @@ func parseEpub(data []byte) ([]Chapter, error) {
 			}
 		}
 		chapters = append(chapters, Chapter{
-			Index: len(chapters) + 1,
-			Title: title,
-			Text:  text,
+			Index:  len(chapters) + 1,
+			Number: chapterNum,
+			Title:  title,
+			Text:   text,
 		})
 	}
 
