@@ -205,8 +205,16 @@ func handleContext(w http.ResponseWriter, r *http.Request) {
 	for i, ch := range chapters {
 		titles[i] = ch.Title
 	}
+	// Prefer the book's own printed chapter count (excludes front matter like
+	// title page, dedication, or a table of contents) so the reader's chapter
+	// picker matches what they see in the book itself, not our internal spine
+	// array length.
+	chapterCount := realChapterCount(chapters)
+	if chapterCount == 0 {
+		chapterCount = len(chapters)
+	}
 	writeJSON(w, map[string]interface{}{
-		"chapter_count": len(chapters),
+		"chapter_count": chapterCount,
 		"chapters":      titles,
 	})
 }
@@ -232,10 +240,21 @@ func handleRecap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summaries, _ := getSummaries(body.FileID)
-	log.Printf("recap: fileID=%s upTo=%d fromChapter=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, body.FromChapter, len(chapters), len(summaries))
+
+	// body.ChapterCount/FromChapter are the book's own printed chapter
+	// numbers (what the reader actually sees), which can diverge from our
+	// internal spine array position when front matter shifts them — resolve
+	// to the correct spine boundary before slicing. FromChapter <= 1 means
+	// "full history" and is passed through as-is.
+	spineUpTo := resolveSpineUpTo(chapters, body.ChapterCount)
+	spineFrom := body.FromChapter
+	if spineFrom > 1 {
+		spineFrom = resolveSpineUpTo(chapters, spineFrom)
+	}
+	log.Printf("recap: fileID=%s realUpTo=%d spineUpTo=%d realFrom=%d spineFrom=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, spineUpTo, body.FromChapter, spineFrom, len(chapters), len(summaries))
 	sseHeaders(w)
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.FromChapter); err != nil {
+	if err := StreamRecap(w, flush, body.Title, chapters, summaries, spineUpTo, spineFrom); err != nil {
 		log.Printf("recap stream error: %v", err)
 	}
 }
@@ -261,10 +280,11 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summaries, _ := getSummaries(body.FileID)
-	log.Printf("chat: fileID=%s upTo=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, len(chapters), len(summaries))
+	spineUpTo := resolveSpineUpTo(chapters, body.ChapterCount)
+	log.Printf("chat: fileID=%s realUpTo=%d spineUpTo=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, spineUpTo, len(chapters), len(summaries))
 	sseHeaders(w)
 	flush := flusher(w)
-	if err := StreamChat(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.Messages); err != nil {
+	if err := StreamChat(w, flush, body.Title, chapters, summaries, spineUpTo, body.Messages); err != nil {
 		log.Printf("chat stream error: %v", err)
 	}
 }
@@ -300,16 +320,22 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	if chaptersCached {
 		titles := make([]string, len(chapters))
 		for i, ch := range chapters {
-			titles[i] = fmt.Sprintf("%d: %s", ch.Index, ch.Title)
+			titles[i] = fmt.Sprintf("spine %d / chapter %d: %s", ch.Index, chapterDisplayNumber(ch), ch.Title)
 		}
 		resp["all_chapter_titles"] = titles
+		resp["real_chapter_count"] = realChapterCount(chapters)
 	}
 
 	if chaptersCached {
-		upTo := chapter
-		if upTo < 1 || upTo > len(chapters) {
-			upTo = len(chapters)
+		// `chapter` is interpreted the same way the real app does: the
+		// book's own printed chapter number, resolved to the correct spine
+		// boundary (see resolveSpineUpTo) rather than treated as a raw spine
+		// array index.
+		upTo := len(chapters)
+		if chapter >= 1 {
+			upTo = resolveSpineUpTo(chapters, chapter)
 		}
+		resp["requested_real_chapter"] = chapter
 		safe := extractChapters(chapters, upTo)
 		safeSummaries := summaries
 		if len(safeSummaries) > upTo {
@@ -360,6 +386,7 @@ func handleDebugChapter(w http.ResponseWriter, r *http.Request) {
 	ch := chapters[index-1]
 	writeJSON(w, map[string]interface{}{
 		"index":         ch.Index,
+		"number":        ch.Number,
 		"title":         ch.Title,
 		"text_length":   len(ch.Text),
 		"text":          ch.Text,
@@ -369,14 +396,15 @@ func handleDebugChapter(w http.ResponseWriter, r *http.Request) {
 
 // detectChapter resolves which chapter the photo corresponds to, plus how far
 // into that chapter's text the reader has gotten (a character offset, or -1
-// if the whole chapter should be treated as read). If hint >= 1 it's taken
-// as-is (the reader manually entered a chapter count, so the whole chapter
-// is fair game); otherwise the image is sent to Claude for OCR and the
+// if the whole chapter should be treated as read). spineHint, if >= 1, is a
+// spine array position already resolved from the reader's manually-entered
+// chapter count (see resolveSpineUpTo) and is taken as-is — the whole chapter
+// is fair game. Otherwise the image is sent to Claude for OCR and the
 // extracted text is matched against cached chapter content to find the exact
 // in-chapter position, preventing spoilers from later in the same chapter.
-func detectChapter(chapters []Chapter, imageB64, mediaType string, hint int) (int, int) {
-	if hint >= 1 {
-		return hint, -1
+func detectChapter(chapters []Chapter, imageB64, mediaType string, spineHint int) (int, int) {
+	if spineHint >= 1 {
+		return spineHint, -1
 	}
 	upTo, offset := len(chapters), -1
 	if snippet, err := IdentifyChapterFromImage(imageB64, mediaType); err == nil && snippet != "" {
@@ -418,11 +446,15 @@ func handlePhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	summaries, _ := getSummaries(body.FileID)
 
-	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, body.ChapterCount)
+	spineHint := -1
+	if body.ChapterCount >= 1 {
+		spineHint = resolveSpineUpTo(chapters, body.ChapterCount)
+	}
+	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, spineHint)
 	safeChapters := extractChaptersPartial(chapters, upTo, offset)
 
 	sseHeaders(w)
-	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
+	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", chapterDisplayNumber(chapters[upTo-1]))
 	flusher(w)()
 
 	flush := flusher(w)
@@ -462,7 +494,7 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 	safeChapters := extractChaptersPartial(chapters, upTo, offset)
 
 	sseHeaders(w)
-	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", upTo)
+	fmt.Fprintf(w, "data: {\"chapter_detected\":%d}\n\n", chapterDisplayNumber(chapters[upTo-1]))
 	flusher(w)()
 
 	flush := flusher(w)

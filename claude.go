@@ -49,6 +49,64 @@ func extractChaptersPartial(chapters []Chapter, upTo, offset int) []Chapter {
 	return safe
 }
 
+// chapterDisplayNumber returns the book's own printed chapter number when the
+// parser found one embedded in the heading, falling back to the spine array
+// position for unnumbered front/back matter or books that don't number their
+// chapters this way.
+func chapterDisplayNumber(ch Chapter) int {
+	if ch.Number > 0 {
+		return ch.Number
+	}
+	return ch.Index
+}
+
+// realChapterCount returns the highest author-assigned chapter number found
+// in the book, i.e. how many real chapters it has excluding unnumbered front
+// matter (title page, dedication, table of contents, etc). Returns 0 if the
+// book doesn't embed chapter numbers this way, signaling callers to fall back
+// to raw spine position.
+func realChapterCount(chapters []Chapter) int {
+	max := 0
+	for _, ch := range chapters {
+		if ch.Number > max {
+			max = ch.Number
+		}
+	}
+	return max
+}
+
+// resolveSpineUpTo translates a reader-facing "read through chapter N" value
+// (matching the book's own printed chapter numbers) into the correct spine
+// array boundary. Front matter can push the spine position out of sync with
+// the book's own chapter count by an offset that isn't safe to assume is
+// constant, so this walks the chapters in order and stops at the last one
+// whose embedded number is <= realN. Falls back to treating realN as a raw
+// spine position when the book has no embedded chapter numbers at all.
+func resolveSpineUpTo(chapters []Chapter, realN int) int {
+	if realN < 1 {
+		realN = 1
+	}
+	if realChapterCount(chapters) == 0 {
+		if realN > len(chapters) {
+			return len(chapters)
+		}
+		return realN
+	}
+	best := 0
+	for i, ch := range chapters {
+		if ch.Number > 0 && ch.Number <= realN {
+			best = i + 1
+		}
+		if ch.Number > realN {
+			break
+		}
+	}
+	if best == 0 {
+		return 1
+	}
+	return best
+}
+
 // buildContext concatenates chapter texts up to a total token budget.
 // Each chapter is capped at maxChapterChars to prevent any single long
 // chapter from eating the whole context.
@@ -60,7 +118,7 @@ func buildContext(chapters []Chapter, maxTotalChars, maxChapterChars int) string
 		if len(text) > maxChapterChars {
 			text = text[:maxChapterChars] + "\n[...chapter continues...]"
 		}
-		section := fmt.Sprintf("=== Chapter %d: %s ===\n%s", ch.Index, ch.Title, text)
+		section := fmt.Sprintf("=== Chapter %d: %s ===\n%s", chapterDisplayNumber(ch), ch.Title, text)
 		if total+len(section) > maxTotalChars {
 			break
 		}
@@ -85,7 +143,7 @@ func buildContextSmart(summaries []string, chapters []Chapter, fullTextWindow, m
 	var parts []string
 	for i := 0; i < splitAt; i++ {
 		if i < len(summaries) && summaries[i] != "" {
-			parts = append(parts, fmt.Sprintf("=== Chapter %d: %s [summary] ===\n%s", chapters[i].Index, chapters[i].Title, summaries[i]))
+			parts = append(parts, fmt.Sprintf("=== Chapter %d: %s [summary] ===\n%s", chapterDisplayNumber(chapters[i]), chapters[i].Title, summaries[i]))
 		}
 	}
 	for i := splitAt; i < len(chapters); i++ {
@@ -93,7 +151,7 @@ func buildContextSmart(summaries []string, chapters []Chapter, fullTextWindow, m
 		if len(text) > maxChapterChars {
 			text = text[:maxChapterChars] + "\n[...chapter continues...]"
 		}
-		parts = append(parts, fmt.Sprintf("=== Chapter %d: %s ===\n%s", chapters[i].Index, chapters[i].Title, text))
+		parts = append(parts, fmt.Sprintf("=== Chapter %d: %s ===\n%s", chapterDisplayNumber(chapters[i]), chapters[i].Title, text))
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -167,13 +225,17 @@ func SummarizeChapters(chapters []Chapter) []string {
 	return summaries
 }
 
+// chapterLabel describes the spine position upTo using the book's own
+// chapter number (chapterDisplayNumber) rather than raw spine position, so
+// it agrees with whatever chapter number the book's own text embeds.
 func chapterLabel(chapters []Chapter, upTo int) string {
 	if upTo >= 1 && upTo <= len(chapters) {
-		title := chapters[upTo-1].Title
-		if title == "" {
-			return fmt.Sprintf("Chapter %d", upTo)
+		ch := chapters[upTo-1]
+		num := chapterDisplayNumber(ch)
+		if ch.Title == "" {
+			return fmt.Sprintf("Chapter %d", num)
 		}
-		return fmt.Sprintf("Chapter %d (%s)", upTo, title)
+		return fmt.Sprintf("Chapter %d (%s)", num, ch.Title)
 	}
 	return fmt.Sprintf("Chapter %d", upTo)
 }
