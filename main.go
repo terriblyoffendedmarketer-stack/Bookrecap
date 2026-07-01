@@ -187,6 +187,17 @@ func handleContext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setChapters(body.FileID, body.FileName, chapters)
+
+		// Generate per-chapter summaries so subsequent requests can use smart context.
+		log.Printf("generating summaries for %d chapters of %q", len(chapters), body.FileName)
+		summaries := SummarizeChapters(chapters)
+		setSummaries(body.FileID, summaries)
+		log.Printf("summaries ready for %q", body.FileName)
+	} else if _, hasSummaries := getSummaries(body.FileID); !hasSummaries {
+		// Cached book missing summaries (e.g. from before this feature) — generate now.
+		log.Printf("backfilling summaries for cached book %q", body.FileName)
+		summaries := SummarizeChapters(chapters)
+		setSummaries(body.FileID, summaries)
 	}
 
 	titles := make([]string, len(chapters))
@@ -219,9 +230,10 @@ func handleRecap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "book not loaded — call /api/context first", http.StatusBadRequest)
 		return
 	}
+	summaries, _ := getSummaries(body.FileID)
 	sseHeaders(w)
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, chapters, body.ChapterCount, body.FromChapter); err != nil {
+	if err := StreamRecap(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.FromChapter); err != nil {
 		log.Printf("recap stream error: %v", err)
 	}
 }
@@ -246,9 +258,10 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "book not loaded — call /api/context first", http.StatusBadRequest)
 		return
 	}
+	summaries, _ := getSummaries(body.FileID)
 	sseHeaders(w)
 	flush := flusher(w)
-	if err := StreamChat(w, flush, body.Title, chapters, body.ChapterCount, body.Messages); err != nil {
+	if err := StreamChat(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.Messages); err != nil {
 		log.Printf("chat stream error: %v", err)
 	}
 }
@@ -302,6 +315,7 @@ func handlePhoto(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "book not loaded — call /api/context first", http.StatusBadRequest)
 		return
 	}
+	summaries, _ := getSummaries(body.FileID)
 
 	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, body.ChapterCount)
 	safeChapters := extractChaptersPartial(chapters, upTo, offset)
@@ -311,7 +325,7 @@ func handlePhoto(w http.ResponseWriter, r *http.Request) {
 	flusher(w)()
 
 	flush := flusher(w)
-	if err := StreamPhoto(w, flush, body.Title, safeChapters, len(safeChapters), body.ImageB64, body.MediaType, body.Question); err != nil {
+	if err := StreamPhoto(w, flush, body.Title, safeChapters, summaries, len(safeChapters), body.ImageB64, body.MediaType, body.Question); err != nil {
 		log.Printf("photo stream error: %v", err)
 	}
 }
@@ -341,6 +355,7 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "book not loaded — call /api/context first", http.StatusBadRequest)
 		return
 	}
+	summaries, _ := getSummaries(body.FileID)
 
 	upTo, offset := detectChapter(chapters, body.ImageB64, body.MediaType, -1)
 	safeChapters := extractChaptersPartial(chapters, upTo, offset)
@@ -350,7 +365,7 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 	flusher(w)()
 
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, safeChapters, len(safeChapters), 0); err != nil {
+	if err := StreamRecap(w, flush, body.Title, safeChapters, summaries, len(safeChapters), 0); err != nil {
 		log.Printf("photo recap stream error: %v", err)
 	}
 }
