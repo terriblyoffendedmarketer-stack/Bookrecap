@@ -378,12 +378,13 @@ func StreamRecap(w io.Writer, flush func(), title string, chapters []Chapter, su
 Write a focused "previously on…" for someone jumping back into this part of the book. Cover %s through %s only.
 
 Structure:
-**What happened** – the key events in this section, in plain English
-**Why it matters** – bring in any earlier thread only when it directly explains something here; skip everything else
+**What happened** – a flowing narrative of the key events in this section, in plain English. Do NOT structure this as a chapter-by-chapter walkthrough or label paragraphs by chapter number — write it as one continuous story, ordered from most recent back to earliest within this section, the way you'd catch a friend up out loud. If a meaningful stretch of in-story time passes between events you're covering (weeks, months, years), say so explicitly and plainly (e.g. "eleven years later...") rather than letting it slide by in a date you mentioned once.
+**Why it matters** – trace each current thread back to wherever it was actually set up, even if that's much earlier than this section — not just the immediately preceding events. Only include a thread if it directly explains something happening now; skip anything that doesn't connect.
 **Key players right now** – who is involved and what each one wants at this moment
 **Where things stand** – the exact situation and open tension at the end of %s
+**Terms & names** – a short glossary of invented technology, factions, ship/AI names, or other jargon introduced in this section that a reader might have forgotten — one line each, plain English
 
-Lead with the most recent events, not the earliest. No spoilers past %s.`,
+No spoilers past %s.`,
 			ctxHeader, ctx, fromLabel, label, label, label)
 
 		return streamClaude(w, flush, claudeRequest{
@@ -414,12 +415,13 @@ Lead with the most recent events, not the earliest. No spoilers past %s.`,
 Write a "previously on…" for someone who put this book down and needs to get back into it. You are writing the "previously on" segment that plays before a new episode of a TV show — it covers what the viewer needs to know RIGHT NOW, not everything that has ever happened.
 
 Structure:
-**What just happened** – lead with the most recent key events, explained clearly
-**The bigger picture** – bring in earlier events ONLY when they directly explain what is happening right now; skip anything that does not connect to the current situation
+**What just happened** – a flowing narrative leading with the most recent key events, explained clearly. Do NOT structure this as a chapter-by-chapter walkthrough or label paragraphs by chapter number — tell it as one continuous story, the way you'd catch a friend up out loud, not a list of "in chapter X..." entries. If a meaningful stretch of in-story time passes between events you're covering (weeks, months, years), call it out explicitly and plainly (e.g. "eleven years later...") — don't let a reader miss a big time jump just because a date only appeared once in passing.
+**The bigger picture** – trace each thread that matters right now back to wherever it actually started, even if that's much earlier in the book than the recent chapters — like flashing back to when a rival was first introduced, not just what they did last chapter. Only include a thread if it directly explains the current situation; skip anything that doesn't connect.
 **Key players right now** – who matters at this moment and what they each want
 **Where things stand** – the exact situation and tension at the end of %s
+**Terms & names** – a short glossary of invented technology, factions, ship/AI names, or other jargon introduced so far that a reader might have forgotten — one line each, plain English. Skip this section if there's genuinely nothing worth defining.
 
-Do NOT do a chapter-by-chapter chronological walkthrough. Do NOT mention characters or events from early in the book unless they are directly relevant to the current situation. Be specific, not vague. Plain language, no spoilers past %s.`,
+Do NOT mention characters or events from early in the book unless they are directly relevant to the current situation. Be specific, not vague. Plain language, no spoilers past %s.`,
 		ctxHeader, ctx, label, label)
 
 	return streamClaude(w, flush, claudeRequest{
@@ -455,6 +457,133 @@ func StreamChat(w io.Writer, flush func(), title string, chapters []Chapter, sum
 	primed := []claudeMessage{
 		{Role: "user", Content: fmt.Sprintf("Here is the content of \"%s\" covering all %d chapters through %s. Use this as your reference:\n\n%s", title, len(safe), label, ctx)},
 		{Role: "assistant", Content: fmt.Sprintf("Got it — I have the complete content of \"%s\" for all %d chapters through %s. I can answer questions about any events, characters, or details from the entire reading so far. Ask me anything.", title, len(safe), label)},
+	}
+	primed = append(primed, messages...)
+
+	return streamClaude(w, flush, claudeRequest{
+		Model:     claudeModel,
+		MaxTokens: 1000,
+		System:    systemPrompt(title, label),
+		Messages:  primed,
+		Stream:    true,
+	})
+}
+
+// lastUserMessageText returns the text of the most recent user turn in a
+// chat history, or "" if there isn't one (e.g. content is an image, used by
+// the photo flow rather than chat).
+func lastUserMessageText(messages []claudeMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		s, _ := messages[i].Content.(string)
+		return s
+	}
+	return ""
+}
+
+// classifyTermLookup asks Haiku whether the reader's latest message is asking
+// to define/identify a specific name, term, technology, or concept (e.g.
+// "what is a SUDAR system", "who is Medeiros"). If so, it returns the exact
+// term to search for; otherwise it returns "" so the caller falls through to
+// the normal chat flow untouched.
+func classifyTermLookup(question string) string {
+	if strings.TrimSpace(question) == "" {
+		return ""
+	}
+	prompt := fmt.Sprintf(`A reader is chatting with an AI about a book. Their latest message is:
+
+"%s"
+
+Does this message ask what a specific name, term, technology, faction, place, or concept means or is (e.g. "what is X", "who is Y", "what does Z mean")? If yes, reply with ONLY the exact term or name being asked about, nothing else. If no — it's a general question, opinion, or doesn't ask to define/identify something specific — reply with exactly: NONE`, question)
+
+	req := claudeRequest{
+		Model:     haikuModel,
+		MaxTokens: 30,
+		Messages:  []claudeMessage{{Role: "user", Content: prompt}},
+		Stream:    false,
+	}
+	body, _ := json.Marshal(req)
+	httpReq, _ := http.NewRequest("POST", claudeAPI, bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", loadConfig().AnthropicAPIKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if len(result.Content) == 0 {
+		return ""
+	}
+	term := strings.TrimSpace(result.Content[0].Text)
+	if term == "" || strings.EqualFold(term, "NONE") {
+		return ""
+	}
+	return term
+}
+
+// findTermOccurrences scans already spoiler-gated chapters for every
+// occurrence of term (case-insensitive) and returns a small window of
+// surrounding text for each, in reading order. This is plain string
+// search — no AI cost — so the caller can afford to gather every occurrence
+// rather than guessing how many are "enough": a term whose meaning only
+// becomes clear on its 17th mention is still included. maxOccurrences is a
+// safety valve for pathologically common terms, not a normal-case cutoff.
+func findTermOccurrences(chapters []Chapter, term string, maxOccurrences int) []string {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return nil
+	}
+	const window = 250
+	lowerTerm := strings.ToLower(term)
+	var snippets []string
+	for _, ch := range chapters {
+		lowerText := strings.ToLower(ch.Text)
+		searchFrom := 0
+		for {
+			idx := strings.Index(lowerText[searchFrom:], lowerTerm)
+			if idx < 0 {
+				break
+			}
+			pos := searchFrom + idx
+			from := pos - window
+			if from < 0 {
+				from = 0
+			}
+			to := pos + len(term) + window
+			if to > len(ch.Text) {
+				to = len(ch.Text)
+			}
+			snippets = append(snippets, strings.TrimSpace(ch.Text[from:to]))
+			if len(snippets) >= maxOccurrences {
+				return snippets
+			}
+			searchFrom = pos + len(term)
+		}
+	}
+	return snippets
+}
+
+// StreamTermLookup answers a term/name lookup using only the gathered
+// occurrence snippets (see findTermOccurrences) rather than the general
+// full-text-plus-summaries book context, so an obscure term buried in an
+// old, now-summarized chapter still gets explained from its exact wording.
+// messages is the ongoing conversation history, appended after the priming
+// exchange so the reply stays part of the same thread.
+func StreamTermLookup(w io.Writer, flush func(), title, label, term string, snippets []string, messages []claudeMessage) error {
+	ctx := strings.Join(snippets, "\n---\n")
+	primed := []claudeMessage{
+		{Role: "user", Content: fmt.Sprintf("Here is every mention of %q found so far in \"%s\" (in reading order):\n\n%s\n\nUse this text to explain what/who %q is, in plain English. If these excerpts genuinely don't explain it, say so honestly rather than guessing — you may supplement with general real-world knowledge if it's a well-known real term being used in a standard way.", term, title, ctx, term)},
+		{Role: "assistant", Content: fmt.Sprintf("Got it — based on those excerpts from \"%s\", I can explain %s.", title, term)},
 	}
 	primed = append(primed, messages...)
 
