@@ -276,10 +276,20 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	fileID := r.URL.Query().Get("file_id")
 	chapter, _ := strconv.Atoi(r.URL.Query().Get("chapter"))
 
+	var bookTitle string
+	usedLatest := false
+	if fileID == "" {
+		if fid, title, ok := latestBook(); ok {
+			fileID, bookTitle, usedLatest = fid, title, true
+		}
+	}
+
 	chapters, chaptersCached := getChapters(fileID)
 	summaries, summariesCached := getSummaries(fileID)
 
 	resp := map[string]interface{}{
+		"used_latest_book": usedLatest,
+		"book_title":       bookTitle,
 		"chapters_cached":  chaptersCached,
 		"summaries_cached": summariesCached,
 		"summary_count":    len(summaries),
