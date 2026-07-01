@@ -160,7 +160,7 @@ async function selectBook(file) {
   state.chatHistory = [];
 
   bookTitle.textContent = file.name;
-  bookChapters.textContent = 'Loading chapters…';
+  bookChapters.textContent = 'Loading & indexing chapters… (first time may take ~30s)';
   bookCard.classList.remove('hidden');
   chapterRow.classList.add('hidden');
   actionRow.classList.add('hidden');

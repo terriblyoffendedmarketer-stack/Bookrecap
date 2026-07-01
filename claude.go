@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const claudeAPI = "https://api.anthropic.com/v1/messages"
 const claudeModel = "claude-sonnet-4-6"
+const haikuModel = "claude-haiku-4-5-20251001"
 
 // extractChapters returns only chapters 1..upTo — the hard spoiler gate.
 // Nothing past upTo is ever included.
@@ -65,6 +68,103 @@ func buildContext(chapters []Chapter, maxTotalChars, maxChapterChars int) string
 		total += len(section)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// buildContextSmart uses pre-generated summaries for older chapters and full
+// text for the most-recent fullTextWindow chapters. This lets Claude understand
+// the entire story arc even for very long books without overflowing the context
+// budget. When summaries is nil or empty, it falls back to buildContext.
+func buildContextSmart(summaries []string, chapters []Chapter, fullTextWindow, maxChapterChars int) string {
+	if len(summaries) == 0 {
+		return buildContext(chapters, 100_000, maxChapterChars)
+	}
+	splitAt := len(chapters) - fullTextWindow
+	if splitAt < 0 {
+		splitAt = 0
+	}
+	var parts []string
+	for i := 0; i < splitAt; i++ {
+		if i < len(summaries) && summaries[i] != "" {
+			parts = append(parts, fmt.Sprintf("=== %s [summary] ===\n%s", chapters[i].Title, summaries[i]))
+		}
+	}
+	for i := splitAt; i < len(chapters); i++ {
+		text := chapters[i].Text
+		if len(text) > maxChapterChars {
+			text = text[:maxChapterChars] + "\n[...chapter continues...]"
+		}
+		parts = append(parts, fmt.Sprintf("=== %s ===\n%s", chapters[i].Title, text))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// summarizeChapter calls Haiku to produce a 2-3 sentence chapter summary.
+func summarizeChapter(ch Chapter) (string, error) {
+	text := ch.Text
+	if len(text) > 5000 {
+		// Include both start and end of chapter to capture setup + resolution.
+		text = text[:2500] + "\n[...]\n" + text[len(text)-2500:]
+	}
+	prompt := fmt.Sprintf(`Summarize this book chapter in 2-3 sentences. Be specific: name the key events, characters involved, and any important decisions or revelations. No vague filler.
+
+Chapter: %s
+
+Text:
+%s`, ch.Title, text)
+
+	req := claudeRequest{
+		Model:     haikuModel,
+		MaxTokens: 150,
+		Messages:  []claudeMessage{{Role: "user", Content: prompt}},
+		Stream:    false,
+	}
+	body, _ := json.Marshal(req)
+	httpReq, _ := http.NewRequest("POST", claudeAPI, bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", loadConfig().AnthropicAPIKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if len(result.Content) > 0 && result.Content[0].Text != "" {
+		return strings.TrimSpace(result.Content[0].Text), nil
+	}
+	return "", fmt.Errorf("no summary returned for %s", ch.Title)
+}
+
+// SummarizeChapters generates a Haiku summary for every chapter in parallel
+// (up to 8 concurrent requests). Errors fall back to the chapter title so the
+// returned slice always has the same length as chapters.
+func SummarizeChapters(chapters []Chapter) []string {
+	summaries := make([]string, len(chapters))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, ch := range chapters {
+		wg.Add(1)
+		go func(idx int, chapter Chapter) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			s, err := summarizeChapter(chapter)
+			if err != nil {
+				log.Printf("summary failed ch%d (%s): %v", idx+1, chapter.Title, err)
+				summaries[idx] = chapter.Title
+			} else {
+				summaries[idx] = s
+			}
+		}(i, ch)
+	}
+	wg.Wait()
+	return summaries
 }
 
 func chapterLabel(chapters []Chapter, upTo int) string {
@@ -171,25 +271,39 @@ func jsonStr(s string) string {
 
 // StreamRecap sends a "previously on" recap up to chapter upTo.
 // fromChapter sets the start of the window (1 = beginning). Values <= 1
-// include all chapters up to upTo. A window like fromChapter=13, upTo=15
-// sends only those chapters and asks for a focused recap of that range.
-func StreamRecap(w io.Writer, flush func(), title string, chapters []Chapter, upTo, fromChapter int) error {
-	// Hard spoiler gate — never past upTo.
-	safe := extractChapters(chapters, upTo)
+// include all chapters up to upTo.
+// summaries is the pre-generated per-chapter summary cache; may be nil.
+func StreamRecap(w io.Writer, flush func(), title string, chapters []Chapter, summaries []string, upTo, fromChapter int) error {
+	allSafe := extractChapters(chapters, upTo)
+	label := chapterLabel(chapters, upTo)
 
-	// Apply window: slice off chapters before fromChapter.
-	if fromChapter > 1 && fromChapter <= len(safe) {
-		safe = safe[fromChapter-1:]
+	// Enforce spoiler gate on summaries.
+	safeSummaries := summaries
+	if len(safeSummaries) > upTo {
+		safeSummaries = safeSummaries[:upTo]
 	}
 
-	label := chapterLabel(chapters, upTo)
-	ctx := buildContext(safe, 120_000, 8_000)
+	var ctx, ctxHeader string
+	if fromChapter > 1 {
+		// Windowed recap: summaries for pre-window backstory + full text for window.
+		fullTextWindow := upTo - fromChapter + 1
+		if fullTextWindow < 1 {
+			fullTextWindow = 1
+		}
+		fromLabel := chapterLabel(chapters, fromChapter)
+		if len(safeSummaries) > 0 {
+			ctx = buildContextSmart(safeSummaries, allSafe, fullTextWindow, 8_000)
+			ctxHeader = fmt.Sprintf(`Here is the content of "%s" covering %s through %s (chapters before %s are provided as brief summaries for background):`, title, fromLabel, label, fromLabel)
+		} else {
+			windowChapters := allSafe
+			if fromChapter-1 < len(windowChapters) {
+				windowChapters = windowChapters[fromChapter-1:]
+			}
+			ctx = buildContext(windowChapters, 120_000, 8_000)
+			ctxHeader = fmt.Sprintf(`Here is the text of "%s" covering %s through %s:`, title, fromLabel, label)
+		}
 
-	var prompt string
-	if len(safe) > 0 && safe[0].Index > 1 {
-		// Windowed recap: chapters fromChapter..upTo only.
-		fromLabel := safe[0].Title
-		prompt = fmt.Sprintf(`Here is the text of "%s" covering %s through %s:
+		prompt := fmt.Sprintf(`%s
 
 %s
 
@@ -204,10 +318,28 @@ Structure:
 **Where things stand** – the exact situation and open tension at the end of %s
 
 Lead with the most recent events, not the earliest. No spoilers past %s.`,
-			title, fromLabel, label, ctx, fromLabel, label, label, label)
+			ctxHeader, ctx, fromLabel, label, label, label)
+
+		return streamClaude(w, flush, claudeRequest{
+			Model:     claudeModel,
+			MaxTokens: 2000,
+			System:    systemPrompt(title, label),
+			Messages:  []claudeMessage{{Role: "user", Content: prompt}},
+			Stream:    true,
+		})
+	}
+
+	// Full-history recap: summaries for older chapters + full text for recent ones.
+	if len(safeSummaries) > 0 {
+		fullTextWindow := min(10, len(allSafe))
+		ctx = buildContextSmart(safeSummaries, allSafe, fullTextWindow, 8_000)
+		ctxHeader = fmt.Sprintf(`Here is the full content of "%s" up through %s (older chapters as brief summaries, recent chapters as full text):`, title, label)
 	} else {
-		// Full-history recap: lead with recent events, work backward only when needed.
-		prompt = fmt.Sprintf(`Here is the full text of "%s" up through %s:
+		ctx = buildContext(allSafe, 120_000, 8_000)
+		ctxHeader = fmt.Sprintf(`Here is the full text of "%s" up through %s:`, title, label)
+	}
+
+	prompt := fmt.Sprintf(`%s
 
 %s
 
@@ -222,8 +354,7 @@ Structure:
 **Where things stand** – the exact situation and tension at the end of %s
 
 Do NOT do a chapter-by-chapter chronological walkthrough. Do NOT mention characters or events from early in the book unless they are directly relevant to the current situation. Be specific, not vague. Plain language, no spoilers past %s.`,
-			title, label, ctx, label, label)
-	}
+		ctxHeader, ctx, label, label)
 
 	return streamClaude(w, flush, claudeRequest{
 		Model:     claudeModel,
@@ -236,15 +367,28 @@ Do NOT do a chapter-by-chapter chronological walkthrough. Do NOT mention charact
 
 // StreamChat handles a multi-turn conversation about the book.
 // messages is the conversation history (without book context injected).
-func StreamChat(w io.Writer, flush func(), title string, chapters []Chapter, upTo int, messages []claudeMessage) error {
+// summaries is the pre-generated per-chapter summary cache; may be nil.
+func StreamChat(w io.Writer, flush func(), title string, chapters []Chapter, summaries []string, upTo int, messages []claudeMessage) error {
 	safe := extractChapters(chapters, upTo)
 	label := chapterLabel(chapters, upTo)
-	ctx := buildContext(safe, 100_000, 8_000)
 
-	// Inject book context as a priming exchange so it doesn't eat the system prompt
+	safeSummaries := summaries
+	if len(safeSummaries) > upTo {
+		safeSummaries = safeSummaries[:upTo]
+	}
+
+	var ctx string
+	if len(safeSummaries) > 0 {
+		// Last 10 chapters as full text; everything before as summaries.
+		ctx = buildContextSmart(safeSummaries, safe, min(10, len(safe)), 8_000)
+	} else {
+		ctx = buildContext(safe, 100_000, 8_000)
+	}
+
+	// Inject book context as a priming exchange so it doesn't eat the system prompt.
 	primed := []claudeMessage{
-		{Role: "user", Content: fmt.Sprintf("Here is the text of \"%s\" up to %s. Use this as your reference:\n\n%s", title, label, ctx)},
-		{Role: "assistant", Content: fmt.Sprintf("Got it — I have the full text of \"%s\" up to %s. Ask me anything about what you've read so far.", title, label)},
+		{Role: "user", Content: fmt.Sprintf("Here is the content of \"%s\" up to %s. Use this as your reference:\n\n%s", title, label, ctx)},
+		{Role: "assistant", Content: fmt.Sprintf("Got it — I have the full content of \"%s\" up to %s. Ask me anything about what you've read so far.", title, label)},
 	}
 	primed = append(primed, messages...)
 
@@ -305,10 +449,22 @@ func IdentifyChapterFromImage(imageB64, mediaType string) (string, error) {
 
 // StreamPhoto answers a question about a book page photo.
 // upTo is already resolved to the correct chapter by the caller.
-func StreamPhoto(w io.Writer, flush func(), title string, chapters []Chapter, upTo int, imageB64, mediaType, question string) error {
+// summaries is the pre-generated per-chapter summary cache; may be nil.
+func StreamPhoto(w io.Writer, flush func(), title string, chapters []Chapter, summaries []string, upTo int, imageB64, mediaType, question string) error {
 	safe := extractChapters(chapters, upTo)
 	label := chapterLabel(chapters, upTo)
-	ctx := buildContext(safe, 80_000, 6_000)
+
+	safeSummaries := summaries
+	if len(safeSummaries) > upTo {
+		safeSummaries = safeSummaries[:upTo]
+	}
+
+	var ctx string
+	if len(safeSummaries) > 0 {
+		ctx = buildContextSmart(safeSummaries, safe, min(5, len(safe)), 6_000)
+	} else {
+		ctx = buildContext(safe, 80_000, 6_000)
+	}
 
 	content := []interface{}{
 		textContent{

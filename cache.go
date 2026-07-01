@@ -34,6 +34,7 @@ func initDB() {
 			file_id   TEXT PRIMARY KEY,
 			title     TEXT NOT NULL,
 			chapters  TEXT NOT NULL,
+			summaries TEXT,
 			cached_at INTEGER NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS config (
@@ -44,6 +45,8 @@ func initDB() {
 	if err != nil {
 		log.Fatalf("failed to create tables: %v", err)
 	}
+	// Add summaries column to existing databases that predate it (error is normal and safe to ignore).
+	db.Exec(`ALTER TABLE books ADD COLUMN summaries TEXT`)
 }
 
 func getConfigVal(key string) string {
@@ -83,5 +86,26 @@ func setChapters(fileID, title string, chapters []Chapter) {
 	`, fileID, title, string(raw), time.Now().Unix())
 	if err != nil {
 		log.Printf("cache write error: %v", err)
+	}
+}
+
+func getSummaries(fileID string) ([]string, bool) {
+	row := db.QueryRow("SELECT summaries FROM books WHERE file_id = ?", fileID)
+	var raw sql.NullString
+	if err := row.Scan(&raw); err != nil || !raw.Valid || raw.String == "" {
+		return nil, false
+	}
+	var summaries []string
+	if err := json.Unmarshal([]byte(raw.String), &summaries); err != nil {
+		return nil, false
+	}
+	return summaries, len(summaries) > 0
+}
+
+func setSummaries(fileID string, summaries []string) {
+	raw, _ := json.Marshal(summaries)
+	_, err := db.Exec("UPDATE books SET summaries = ? WHERE file_id = ?", string(raw), fileID)
+	if err != nil {
+		log.Printf("summaries write error: %v", err)
 	}
 }
