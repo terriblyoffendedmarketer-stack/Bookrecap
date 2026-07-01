@@ -89,6 +89,12 @@ func parseEpub(data []byte) ([]Chapter, error) {
 	// Extract chapters in spine order
 	var chapters []Chapter
 	chapterRe := regexp.MustCompile(`(?i)chapter|part|section|prologue|epilogue|introduction|preface`)
+	// Some books number their headings independently of the epub spine
+	// (e.g. front matter pushes "Chapter 1" to spine position 6), so a
+	// heading like "10. Bob – August 10, 2133" doesn't match our own
+	// chapter count. Strip that leading number so it can't be mistaken
+	// for — or quoted back as — our chapter index.
+	leadingNumberRe := regexp.MustCompile(`^\d+\.\s*`)
 
 	for _, spineItem := range pkg.Spine.Items {
 		href, ok := idToHref[spineItem.IDRef]
@@ -107,6 +113,7 @@ func parseEpub(data []byte) ([]Chapter, error) {
 		rc.Close()
 
 		title, text := extractHTMLText(content)
+		title = strings.TrimSpace(leadingNumberRe.ReplaceAllString(title, ""))
 		text = strings.TrimSpace(text)
 		if len(text) < 150 {
 			continue // skip nav pages, covers, etc.
