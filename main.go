@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -259,11 +260,59 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summaries, _ := getSummaries(body.FileID)
+	log.Printf("chat: fileID=%s upTo=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, len(chapters), len(summaries))
 	sseHeaders(w)
 	flush := flusher(w)
 	if err := StreamChat(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.Messages); err != nil {
 		log.Printf("chat stream error: %v", err)
 	}
+}
+
+// handleDebug reports what buildContextSmart/buildContext actually produce
+// for a given file_id and chapter, so we can tell whether the chapter cap
+// bug is caused by missing summaries (fallback to the truncating buildContext)
+// or something else. No auth — temporary diagnostic endpoint.
+func handleDebug(w http.ResponseWriter, r *http.Request) {
+	fileID := r.URL.Query().Get("file_id")
+	chapter, _ := strconv.Atoi(r.URL.Query().Get("chapter"))
+
+	chapters, chaptersCached := getChapters(fileID)
+	summaries, summariesCached := getSummaries(fileID)
+
+	resp := map[string]interface{}{
+		"chapters_cached":  chaptersCached,
+		"summaries_cached": summariesCached,
+		"summary_count":    len(summaries),
+		"chapter_count":    len(chapters),
+	}
+
+	if chaptersCached {
+		upTo := chapter
+		if upTo < 1 || upTo > len(chapters) {
+			upTo = len(chapters)
+		}
+		safe := extractChapters(chapters, upTo)
+		safeSummaries := summaries
+		if len(safeSummaries) > upTo {
+			safeSummaries = safeSummaries[:upTo]
+		}
+		var ctx string
+		if len(safeSummaries) > 0 {
+			ctx = buildContextSmart(safeSummaries, safe, min(10, len(safe)), 8_000)
+		} else {
+			ctx = buildContext(safe, 100_000, 8_000)
+		}
+		preview := ctx
+		if len(preview) > 500 {
+			preview = preview[:500]
+		}
+		resp["resolved_upTo"] = upTo
+		resp["chapter_label"] = chapterLabel(chapters, upTo)
+		resp["context_length"] = len(ctx)
+		resp["context_preview"] = preview
+	}
+
+	writeJSON(w, resp)
 }
 
 // detectChapter resolves which chapter the photo corresponds to, plus how far
@@ -461,6 +510,7 @@ func main() {
 	mux.HandleFunc("GET /auth/logout", handleAuthLogout)
 	mux.HandleFunc("GET /api/search", handleSearch)
 	mux.HandleFunc("POST /api/context", handleContext)
+	mux.HandleFunc("GET /api/debug", handleDebug)
 	mux.HandleFunc("POST /api/recap", handleRecap)
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
