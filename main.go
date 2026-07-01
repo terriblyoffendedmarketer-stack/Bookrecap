@@ -285,6 +285,26 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	summaries, _ := getSummaries(body.FileID)
 	spineUpTo := resolveSpineUpTo(chapters, body.ChapterCount)
 	log.Printf("chat: fileID=%s realUpTo=%d spineUpTo=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, spineUpTo, len(chapters), len(summaries))
+
+	// If the reader is asking to define/identify a specific term ("what is a
+	// SUDAR system"), search the actual book text for it instead of relying
+	// on the general full-text-plus-summaries context, which can lose an
+	// obscure term once its chapter ages into a summary. Falls through to
+	// the normal chat flow if no term is detected or it isn't in the book.
+	safe := extractChapters(chapters, spineUpTo)
+	if term := classifyTermLookup(lastUserMessageText(body.Messages)); term != "" {
+		if snippets := findTermOccurrences(safe, term, 80); len(snippets) > 0 {
+			log.Printf("chat: term lookup %q found %d occurrences", term, len(snippets))
+			sseHeaders(w)
+			flush := flusher(w)
+			label := chapterLabel(chapters, spineUpTo)
+			if err := StreamTermLookup(w, flush, body.Title, label, term, snippets, body.Messages); err != nil {
+				log.Printf("term lookup stream error: %v", err)
+			}
+			return
+		}
+	}
+
 	sseHeaders(w)
 	flush := flusher(w)
 	if err := StreamChat(w, flush, body.Title, chapters, summaries, spineUpTo, body.Messages); err != nil {

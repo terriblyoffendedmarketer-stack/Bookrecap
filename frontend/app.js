@@ -176,10 +176,12 @@ async function selectBook(file) {
   }
   const data = await res.json();
   state.chapterCount = data.chapter_count;
-  state.upTo = data.chapter_count;
+  // Default to the first chapter, not the last — an accidental Enter/click
+  // should never accidentally spoil the whole book.
+  state.upTo = 1;
   bookChapters.textContent = `${data.chapter_count} chapters`;
   chapterInput.max = data.chapter_count;
-  chapterInput.value = data.chapter_count;
+  chapterInput.value = 1;
   chapterRow.classList.remove('hidden');
   actionRow.classList.remove('hidden');
 }
