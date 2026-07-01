@@ -298,6 +298,14 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chaptersCached {
+		titles := make([]string, len(chapters))
+		for i, ch := range chapters {
+			titles[i] = fmt.Sprintf("%d: %s", ch.Index, ch.Title)
+		}
+		resp["all_chapter_titles"] = titles
+	}
+
+	if chaptersCached {
 		upTo := chapter
 		if upTo < 1 || upTo > len(chapters) {
 			upTo = len(chapters)
