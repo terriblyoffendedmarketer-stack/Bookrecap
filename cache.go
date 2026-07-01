@@ -14,6 +14,7 @@ import (
 type Chapter struct {
 	Index  int    `json:"index"`
 	Number int    `json:"number"` // the book's own printed chapter number, when its heading embeds one; 0 for unnumbered front/back matter
+	Href   string `json:"href"`   // epub-root-relative source file path (empty for non-epub books), used to match against the TOC
 	Title  string `json:"title"`
 	Text   string `json:"text"`
 }

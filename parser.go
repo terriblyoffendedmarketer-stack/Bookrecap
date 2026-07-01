@@ -182,14 +182,19 @@ func extractTOC(data []byte, chapters []Chapter) ([]TOCEntry, error) {
 	}
 
 	// Match each TOC entry's href (resolved relative to the nav/ncx file's
-	// own directory, ignoring any #fragment) to the spine-ordered chapters
-	// array. Multiple TOC entries can legitimately point at the same spine
-	// file (e.g. an anchor mid-chapter); each still resolves to that
-	// chapter's position.
+	// own directory, ignoring any #fragment) to the already-parsed chapters
+	// array. This must use chapters[i].Href (parseEpub's own record of which
+	// file each surviving chapter came from) rather than recomputing spine
+	// position from the raw OPF spine list — parseEpub silently drops some
+	// spine items (covers, nav pages, anything under 150 chars), so raw
+	// spine position and the filtered chapters array's Index can diverge.
+	// Multiple TOC entries can legitimately point at the same spine file
+	// (e.g. an anchor mid-chapter); each still resolves to that chapter's
+	// position.
 	hrefToSpineIndex := make(map[string]int)
-	for i, spineItem := range pkg.Spine.Items {
-		if href, ok := idToHref[spineItem.IDRef]; ok {
-			hrefToSpineIndex[href] = i + 1
+	for _, ch := range chapters {
+		if ch.Href != "" {
+			hrefToSpineIndex[ch.Href] = ch.Index
 		}
 	}
 	for i := range entries {
@@ -368,6 +373,7 @@ func parseEpub(data []byte) ([]Chapter, error) {
 		chapters = append(chapters, Chapter{
 			Index:  len(chapters) + 1,
 			Number: chapterNum,
+			Href:   href,
 			Title:  title,
 			Text:   text,
 		})
@@ -381,7 +387,109 @@ func parseEpub(data []byte) ([]Chapter, error) {
 		chapters[i].Index = i + 1
 	}
 
+	// Prefer the book's own declared table of contents (nav.xhtml/toc.ncx)
+	// for chapter numbering — it's the general, book-agnostic source every
+	// e-reader uses, unlike the in-body heading heuristic above which only
+	// works for books that happen to print their own chapter number in the
+	// text. Falls back to that heuristic (already applied above) if the
+	// epub has no usable TOC at all.
+	if entries, err := extractTOC(data, chapters); err == nil && len(entries) > 0 {
+		applyTOCNumbering(chapters, entries)
+	}
+
 	return chapters, nil
+}
+
+// chapterNumberFromLabel extracts a chapter number from a TOC label, but
+// only for patterns unambiguous enough to trust: the whole label is just a
+// number ("10", "10."), an explicit "Chapter" prefix ("Chapter 10: ..."), or
+// a leading "N. " convention ("10. Title"). This deliberately does not match
+// an arbitrary digit anywhere in the label — e.g. a story-internal codename
+// like "SCP-055" or a date embedded in the title — to avoid mistaking an
+// unrelated number for the chapter number.
+var (
+	bareNumberLabelRe = regexp.MustCompile(`^(\d+)\.?\s*$`)
+	chapterPrefixRe   = regexp.MustCompile(`(?i)^chapter\s+(\d+)\b`)
+	numberedTitleRe   = regexp.MustCompile(`^(\d+)\.\s+\S`)
+
+	chapterPrefixStripRe = regexp.MustCompile(`(?i)^chapter\s+\d+\s*[:\-–—]?\s*`)
+	numberedTitleStripRe = regexp.MustCompile(`^\d+\.\s+`)
+	autoTitleRe          = regexp.MustCompile(`^(Chapter|Section) \d+$`)
+)
+
+func chapterNumberFromLabel(label string) (int, bool) {
+	label = strings.TrimSpace(label)
+	for _, re := range []*regexp.Regexp{bareNumberLabelRe, chapterPrefixRe, numberedTitleRe} {
+		if m := re.FindStringSubmatch(label); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// cleanTOCLabelTitle strips a recognized chapter-number prefix from a TOC
+// label so it can safely replace an auto-generated placeholder title (our
+// own "Chapter N"/"Section N" fallback, which reflects spine position rather
+// than the book's real chapter number) without reintroducing a conflicting
+// number into the title text.
+func cleanTOCLabelTitle(label string, num int) string {
+	label = strings.TrimSpace(label)
+	if bareNumberLabelRe.MatchString(label) {
+		return fmt.Sprintf("Chapter %d", num)
+	}
+	for _, re := range []*regexp.Regexp{chapterPrefixStripRe, numberedTitleStripRe} {
+		if m := re.FindString(label); m != "" {
+			cleaned := strings.TrimSpace(strings.TrimPrefix(label, m))
+			if cleaned == "" {
+				return fmt.Sprintf("Chapter %d", num)
+			}
+			return cleaned
+		}
+	}
+	return label
+}
+
+// applyTOCNumbering assigns each chapter its real, reader-facing chapter
+// number from the book's own table of contents. It prefers an explicit
+// number found in a TOC label (the safest, most literal signal); entries
+// without one are left unnumbered — e.g. an "Introduction" that has its own
+// TOC entry but isn't part of the book's numbered chapter sequence simply
+// falls back to raw spine position (chapterDisplayNumber's default), which
+// is correct. Only when the book has no explicit numbering anywhere in its
+// TOC does this fall back to numbering every matched entry sequentially, so
+// unnumbered books (e.g. thematically-titled chapters) still get a chapter
+// count that excludes front matter, rather than no signal at all.
+func applyTOCNumbering(chapters []Chapter, entries []TOCEntry) {
+	assigned := make(map[int]bool)
+	anyLabelNumbered := false
+	for _, e := range entries {
+		if e.SpineIndex < 1 || e.SpineIndex > len(chapters) || assigned[e.SpineIndex] {
+			continue
+		}
+		if n, ok := chapterNumberFromLabel(e.Label); ok {
+			ch := &chapters[e.SpineIndex-1]
+			ch.Number = n
+			if autoTitleRe.MatchString(ch.Title) {
+				ch.Title = cleanTOCLabelTitle(e.Label, n)
+			}
+			assigned[e.SpineIndex] = true
+			anyLabelNumbered = true
+		}
+	}
+	if anyLabelNumbered {
+		return
+	}
+	num := 0
+	for _, e := range entries {
+		if e.SpineIndex < 1 || e.SpineIndex > len(chapters) || assigned[e.SpineIndex] {
+			continue
+		}
+		num++
+		chapters[e.SpineIndex-1].Number = num
+		assigned[e.SpineIndex] = true
+	}
 }
 
 func extractHTMLText(content []byte) (title, text string) {
