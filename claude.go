@@ -60,7 +60,7 @@ func buildContext(chapters []Chapter, maxTotalChars, maxChapterChars int) string
 		if len(text) > maxChapterChars {
 			text = text[:maxChapterChars] + "\n[...chapter continues...]"
 		}
-		section := fmt.Sprintf("=== %s ===\n%s", ch.Title, text)
+		section := fmt.Sprintf("=== Chapter %d: %s ===\n%s", ch.Index, ch.Title, text)
 		if total+len(section) > maxTotalChars {
 			break
 		}
@@ -85,7 +85,7 @@ func buildContextSmart(summaries []string, chapters []Chapter, fullTextWindow, m
 	var parts []string
 	for i := 0; i < splitAt; i++ {
 		if i < len(summaries) && summaries[i] != "" {
-			parts = append(parts, fmt.Sprintf("=== %s [summary] ===\n%s", chapters[i].Title, summaries[i]))
+			parts = append(parts, fmt.Sprintf("=== Chapter %d: %s [summary] ===\n%s", chapters[i].Index, chapters[i].Title, summaries[i]))
 		}
 	}
 	for i := splitAt; i < len(chapters); i++ {
@@ -93,7 +93,7 @@ func buildContextSmart(summaries []string, chapters []Chapter, fullTextWindow, m
 		if len(text) > maxChapterChars {
 			text = text[:maxChapterChars] + "\n[...chapter continues...]"
 		}
-		parts = append(parts, fmt.Sprintf("=== %s ===\n%s", chapters[i].Title, text))
+		parts = append(parts, fmt.Sprintf("=== Chapter %d: %s ===\n%s", chapters[i].Index, chapters[i].Title, text))
 	}
 	return strings.Join(parts, "\n\n")
 }
