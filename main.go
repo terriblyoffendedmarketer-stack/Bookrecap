@@ -232,6 +232,7 @@ func handleRecap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summaries, _ := getSummaries(body.FileID)
+	log.Printf("recap: fileID=%s upTo=%d fromChapter=%d chapters=%d summaries=%d", body.FileID, body.ChapterCount, body.FromChapter, len(chapters), len(summaries))
 	sseHeaders(w)
 	flush := flusher(w)
 	if err := StreamRecap(w, flush, body.Title, chapters, summaries, body.ChapterCount, body.FromChapter); err != nil {
