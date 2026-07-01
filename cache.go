@@ -65,6 +65,16 @@ func setConfigVal(key, value string) {
 	}
 }
 
+// latestBook returns the file_id and title of the most recently cached
+// book, so the debug endpoint can be used without knowing the file_id.
+func latestBook() (fileID, title string, ok bool) {
+	row := db.QueryRow("SELECT file_id, title FROM books ORDER BY cached_at DESC LIMIT 1")
+	if err := row.Scan(&fileID, &title); err != nil {
+		return "", "", false
+	}
+	return fileID, title, true
+}
+
 func getChapters(fileID string) ([]Chapter, bool) {
 	row := db.QueryRow("SELECT chapters FROM books WHERE file_id = ?", fileID)
 	var raw string
