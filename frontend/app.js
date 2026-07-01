@@ -7,6 +7,7 @@ const state = {
   book: null,          // { id, name, mime_type }
   chapterCount: 0,
   upTo: 1,
+  recapWindow: 5,      // how many chapters to cover; 0 = full story
   chatHistory: [],     // main Ask tab
   recapHistory: [],    // seeded after recap completes
   photoHistory: [],    // seeded after photo explain/recap completes
@@ -274,6 +275,15 @@ function clearPanels() {
   clearPhoto();
 }
 
+// --- Recap window chips ---
+document.querySelectorAll('.window-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.window-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.recapWindow = parseInt(chip.dataset.window, 10);
+  });
+});
+
 // --- Recap ---
 $('btn-recap').addEventListener('click', doRecap);
 
@@ -289,10 +299,16 @@ async function doRecap() {
   state.streaming = true;
   let text = '';
 
+  // fromChapter: 0 means full story; otherwise start at (upTo - window + 1)
+  const fromChapter = state.recapWindow > 0
+    ? Math.max(1, state.upTo - state.recapWindow + 1)
+    : 0;
+
   await streamSSE('/api/recap', {
     file_id: state.book.id,
     title: state.book.name,
     chapter_count: state.upTo,
+    from_chapter: fromChapter,
   }, chunk => {
     if (out.querySelector('.loader')) out.innerHTML = '';
     text += chunk;

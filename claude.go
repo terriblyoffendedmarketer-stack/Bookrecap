@@ -170,25 +170,60 @@ func jsonStr(s string) string {
 }
 
 // StreamRecap sends a "previously on" recap up to chapter upTo.
-func StreamRecap(w io.Writer, flush func(), title string, chapters []Chapter, upTo int) error {
+// fromChapter sets the start of the window (1 = beginning). Values <= 1
+// include all chapters up to upTo. A window like fromChapter=13, upTo=15
+// sends only those chapters and asks for a focused recap of that range.
+func StreamRecap(w io.Writer, flush func(), title string, chapters []Chapter, upTo, fromChapter int) error {
+	// Hard spoiler gate — never past upTo.
 	safe := extractChapters(chapters, upTo)
+
+	// Apply window: slice off chapters before fromChapter.
+	if fromChapter > 1 && fromChapter <= len(safe) {
+		safe = safe[fromChapter-1:]
+	}
+
 	label := chapterLabel(chapters, upTo)
 	ctx := buildContext(safe, 120_000, 8_000)
 
-	prompt := fmt.Sprintf(`Here is the book text up to %s:
+	var prompt string
+	if len(safe) > 0 && safe[0].Index > 1 {
+		// Windowed recap: chapters fromChapter..upTo only.
+		fromLabel := safe[0].Title
+		prompt = fmt.Sprintf(`Here is the text of "%s" covering %s through %s:
 
 %s
 
 ---
 
-Write a "previously on…" recap for someone who put this book down and needs to get back into it. Structure it as:
+Write a focused "previously on…" for someone jumping back into this part of the book. Cover %s through %s only.
 
-**The story so far** – what has happened, in order, clearly summarized
-**Key characters** – who they are, their roles, how they relate to each other
-**What's at stake** – the main conflict and tensions right now
-**Where things left off** – exact situation at the end of %s
+Structure:
+**What happened** – the key events in this section, in plain English
+**Why it matters** – bring in any earlier thread only when it directly explains something here; skip everything else
+**Key players right now** – who is involved and what each one wants at this moment
+**Where things stand** – the exact situation and open tension at the end of %s
 
-Plain language, no spoilers past %s.`, label, ctx, label, label)
+Lead with the most recent events, not the earliest. No spoilers past %s.`,
+			title, fromLabel, label, ctx, fromLabel, label, label, label)
+	} else {
+		// Full-history recap: lead with recent events, work backward only when needed.
+		prompt = fmt.Sprintf(`Here is the full text of "%s" up through %s:
+
+%s
+
+---
+
+Write a "previously on…" for someone who put this book down and needs to get back into it. You are writing the "previously on" segment that plays before a new episode of a TV show — it covers what the viewer needs to know RIGHT NOW, not everything that has ever happened.
+
+Structure:
+**What just happened** – lead with the most recent key events, explained clearly
+**The bigger picture** – bring in earlier events ONLY when they directly explain what is happening right now; skip anything that does not connect to the current situation
+**Key players right now** – who matters at this moment and what they each want
+**Where things stand** – the exact situation and tension at the end of %s
+
+Do NOT do a chapter-by-chapter chronological walkthrough. Do NOT mention characters or events from early in the book unless they are directly relevant to the current situation. Be specific, not vague. Plain language, no spoilers past %s.`,
+			title, label, ctx, label, label)
+	}
 
 	return streamClaude(w, flush, claudeRequest{
 		Model:     claudeModel,
