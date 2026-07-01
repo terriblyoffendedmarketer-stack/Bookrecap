@@ -334,6 +334,39 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// handleDebugChapter returns the full raw title+text of a single cached
+// chapter by its spine index, so the actual book content can be inspected
+// directly over HTTP without needing separate Google Drive access. No auth —
+// temporary diagnostic endpoint.
+func handleDebugChapter(w http.ResponseWriter, r *http.Request) {
+	fileID := r.URL.Query().Get("file_id")
+	index, _ := strconv.Atoi(r.URL.Query().Get("index"))
+
+	if fileID == "" {
+		if fid, _, ok := latestBook(); ok {
+			fileID = fid
+		}
+	}
+
+	chapters, ok := getChapters(fileID)
+	if !ok {
+		writeJSON(w, map[string]interface{}{"error": "no chapters cached"})
+		return
+	}
+	if index < 1 || index > len(chapters) {
+		writeJSON(w, map[string]interface{}{"error": fmt.Sprintf("index out of range (1-%d)", len(chapters))})
+		return
+	}
+	ch := chapters[index-1]
+	writeJSON(w, map[string]interface{}{
+		"index":         ch.Index,
+		"title":         ch.Title,
+		"text_length":   len(ch.Text),
+		"text":          ch.Text,
+		"chapter_count": len(chapters),
+	})
+}
+
 // detectChapter resolves which chapter the photo corresponds to, plus how far
 // into that chapter's text the reader has gotten (a character offset, or -1
 // if the whole chapter should be treated as read). If hint >= 1 it's taken
@@ -444,12 +477,12 @@ func handleConfigGet(w http.ResponseWriter, r *http.Request) {
 	cfg := loadConfig()
 	// Never send secret keys; mask the client secret and API key after the first 4 chars
 	writeJSON(w, map[string]interface{}{
-		"google_client_id":      cfg.GoogleClientID,
-		"google_client_secret":  mask(cfg.GoogleClientSecret),
-		"google_redirect_uri":   cfg.GoogleRedirectURI,
-		"anthropic_api_key":     mask(cfg.AnthropicAPIKey),
-		"drive_folder_id":       cfg.DriveFolderID,
-		"ready":                 configReady(),
+		"google_client_id":     cfg.GoogleClientID,
+		"google_client_secret": mask(cfg.GoogleClientSecret),
+		"google_redirect_uri":  cfg.GoogleRedirectURI,
+		"anthropic_api_key":    mask(cfg.AnthropicAPIKey),
+		"drive_folder_id":      cfg.DriveFolderID,
+		"ready":                configReady(),
 	})
 }
 
@@ -530,6 +563,7 @@ func main() {
 	mux.HandleFunc("GET /api/search", handleSearch)
 	mux.HandleFunc("POST /api/context", handleContext)
 	mux.HandleFunc("GET /api/debug", handleDebug)
+	mux.HandleFunc("GET /api/debug/chapter", handleDebugChapter)
 	mux.HandleFunc("POST /api/recap", handleRecap)
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
@@ -545,4 +579,3 @@ func main() {
 	log.Printf("BookRecap running on http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
-
