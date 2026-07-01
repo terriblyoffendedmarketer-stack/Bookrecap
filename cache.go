@@ -48,6 +48,10 @@ func initDB() {
 	}
 	// Add summaries column to existing databases that predate it (error is normal and safe to ignore).
 	db.Exec(`ALTER TABLE books ADD COLUMN summaries TEXT`)
+	// Temporary: cache the raw epub bytes so the actual EPUB nav/TOC
+	// structure can be inspected via a debug endpoint without needing
+	// separate Google Drive access. Diagnostic only — safe to drop later.
+	db.Exec(`ALTER TABLE books ADD COLUMN raw_epub BLOB`)
 }
 
 func getConfigVal(key string) string {
@@ -98,6 +102,24 @@ func setChapters(fileID, title string, chapters []Chapter) {
 	if err != nil {
 		log.Printf("cache write error: %v", err)
 	}
+}
+
+// setRawEpub caches the original epub bytes for a book, temporarily, so the
+// real EPUB nav/TOC structure can be inspected directly for diagnostics.
+func setRawEpub(fileID string, data []byte) {
+	_, err := db.Exec("UPDATE books SET raw_epub = ? WHERE file_id = ?", data, fileID)
+	if err != nil {
+		log.Printf("raw epub write error: %v", err)
+	}
+}
+
+func getRawEpub(fileID string) ([]byte, bool) {
+	row := db.QueryRow("SELECT raw_epub FROM books WHERE file_id = ?", fileID)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	return raw, true
 }
 
 func getSummaries(fileID string) ([]string, bool) {

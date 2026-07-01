@@ -188,6 +188,9 @@ func handleContext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setChapters(body.FileID, body.FileName, chapters)
+		if strings.Contains(mimeType, "epub") {
+			setRawEpub(body.FileID, data)
+		}
 
 		// Generate per-chapter summaries so subsequent requests can use smart context.
 		log.Printf("generating summaries for %d chapters of %q", len(chapters), body.FileName)
@@ -394,6 +397,53 @@ func handleDebugChapter(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleDebugTOC parses the epub's own declared table of contents (EPUB3
+// nav.xhtml or EPUB2 toc.ncx) and reports how each entry maps to our parsed
+// spine-ordered chapters array. This is the general, book-agnostic source of
+// chapter structure a real e-reader uses — validating it here before relying
+// on it, rather than the heading-text heuristics that only work for books
+// which happen to print their own chapter number in the text. No auth —
+// temporary diagnostic endpoint.
+func handleDebugTOC(w http.ResponseWriter, r *http.Request) {
+	fileID := r.URL.Query().Get("file_id")
+	if fileID == "" {
+		if fid, _, ok := latestBook(); ok {
+			fileID = fid
+		}
+	}
+
+	raw, ok := getRawEpub(fileID)
+	if !ok {
+		writeJSON(w, map[string]interface{}{"error": "no raw epub cached for this book — reopen it in the app first"})
+		return
+	}
+	chapters, _ := getChapters(fileID)
+
+	entries, err := extractTOC(raw, chapters)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	rows := make([]map[string]interface{}, len(entries))
+	for i, e := range entries {
+		row := map[string]interface{}{
+			"toc_position": i + 1,
+			"label":        e.Label,
+			"href":         e.Href,
+			"spine_index":  e.SpineIndex,
+		}
+		if e.SpineIndex >= 1 && e.SpineIndex <= len(chapters) {
+			row["matched_chapter_title"] = chapters[e.SpineIndex-1].Title
+		}
+		rows[i] = row
+	}
+	writeJSON(w, map[string]interface{}{
+		"toc_entry_count": len(entries),
+		"entries":         rows,
+	})
+}
+
 // detectChapter resolves which chapter the photo corresponds to, plus how far
 // into that chapter's text the reader has gotten (a character offset, or -1
 // if the whole chapter should be treated as read). spineHint, if >= 1, is a
@@ -596,6 +646,7 @@ func main() {
 	mux.HandleFunc("POST /api/context", handleContext)
 	mux.HandleFunc("GET /api/debug", handleDebug)
 	mux.HandleFunc("GET /api/debug/chapter", handleDebugChapter)
+	mux.HandleFunc("GET /api/debug/toc", handleDebugTOC)
 	mux.HandleFunc("POST /api/recap", handleRecap)
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
