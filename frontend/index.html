@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>BookRecap</title>
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -110,6 +110,15 @@
     <!-- RECAP PANEL -->
     <div id="panel-recap" class="hidden">
       <div class="label">Recap</div>
+      <div class="recap-window-row">
+        <span class="recap-window-label">Cover:</span>
+        <div class="recap-window-chips">
+          <button class="window-chip" data-window="3">Last 3 ch.</button>
+          <button class="window-chip active" data-window="5">Last 5 ch.</button>
+          <button class="window-chip" data-window="10">Last 10 ch.</button>
+          <button class="window-chip" data-window="0">Full story</button>
+        </div>
+      </div>
       <div id="recap-output" class="recap-output empty" style="min-height:120px;color:#888;font-style:italic;">
         Pick a book and tap Recap to get started.
       </div>

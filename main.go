@@ -208,6 +208,7 @@ func handleRecap(w http.ResponseWriter, r *http.Request) {
 		FileID       string `json:"file_id"`
 		Title        string `json:"title"`
 		ChapterCount int    `json:"chapter_count"`
+		FromChapter  int    `json:"from_chapter"` // 0/1 = full history; >1 = windowed recap
 	}
 	if err := readJSON(r, &body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -220,7 +221,7 @@ func handleRecap(w http.ResponseWriter, r *http.Request) {
 	}
 	sseHeaders(w)
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, chapters, body.ChapterCount); err != nil {
+	if err := StreamRecap(w, flush, body.Title, chapters, body.ChapterCount, body.FromChapter); err != nil {
 		log.Printf("recap stream error: %v", err)
 	}
 }
@@ -349,7 +350,7 @@ func handlePhotoRecap(w http.ResponseWriter, r *http.Request) {
 	flusher(w)()
 
 	flush := flusher(w)
-	if err := StreamRecap(w, flush, body.Title, safeChapters, len(safeChapters)); err != nil {
+	if err := StreamRecap(w, flush, body.Title, safeChapters, len(safeChapters), 0); err != nil {
 		log.Printf("photo recap stream error: %v", err)
 	}
 }
@@ -449,6 +450,8 @@ func main() {
 	mux.HandleFunc("POST /api/chat", handleChat)
 	mux.HandleFunc("POST /api/photo", handlePhoto)
 	mux.HandleFunc("POST /api/photo-recap", handlePhotoRecap)
+	mux.HandleFunc("GET /icon-192.png", handleIcon192)
+	mux.HandleFunc("GET /icon-512.png", handleIcon512)
 	mux.HandleFunc("/", handleStatic())
 
 	port := os.Getenv("PORT")
