@@ -169,7 +169,11 @@ func SummarizeChapters(chapters []Chapter) []string {
 
 func chapterLabel(chapters []Chapter, upTo int) string {
 	if upTo >= 1 && upTo <= len(chapters) {
-		return chapters[upTo-1].Title
+		title := chapters[upTo-1].Title
+		if title == "" {
+			return fmt.Sprintf("Chapter %d", upTo)
+		}
+		return fmt.Sprintf("Chapter %d (%s)", upTo, title)
 	}
 	return fmt.Sprintf("Chapter %d", upTo)
 }
@@ -387,8 +391,8 @@ func StreamChat(w io.Writer, flush func(), title string, chapters []Chapter, sum
 
 	// Inject book context as a priming exchange so it doesn't eat the system prompt.
 	primed := []claudeMessage{
-		{Role: "user", Content: fmt.Sprintf("Here is the content of \"%s\" up to %s. Use this as your reference:\n\n%s", title, label, ctx)},
-		{Role: "assistant", Content: fmt.Sprintf("Got it — I have the full content of \"%s\" up to %s. Ask me anything about what you've read so far.", title, label)},
+		{Role: "user", Content: fmt.Sprintf("Here is the content of \"%s\" covering all %d chapters through %s. Use this as your reference:\n\n%s", title, len(safe), label, ctx)},
+		{Role: "assistant", Content: fmt.Sprintf("Got it — I have the complete content of \"%s\" for all %d chapters through %s. I can answer questions about any events, characters, or details from the entire reading so far. Ask me anything.", title, len(safe), label)},
 	}
 	primed = append(primed, messages...)
 
