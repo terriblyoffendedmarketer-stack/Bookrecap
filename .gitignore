@@ -1,3 +1,4 @@
 bookrecap
 .env
 cache.db
+testdata/
